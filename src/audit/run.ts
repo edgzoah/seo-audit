@@ -223,7 +223,11 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
-  const issues = runRules(extractedPages[0]);
+  const issues = await runRules({
+    pages: extractedPages,
+    robotsDisallow: seedDiscovery.robots_disallow,
+    timeoutMs: inputs.timeout_ms,
+  });
 
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(extractedPages, null, 2)}\n`, "utf-8");
   await writeFile(path.join(runDir, "issues.json"), `${JSON.stringify(issues, null, 2)}\n`, "utf-8");

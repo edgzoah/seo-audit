@@ -6,3 +6,4 @@
 - [x] Seed discovery step implemented (spec block: PIPELINE STEP 1)
 - [x] Crawl step implemented (spec block: PIPELINE STEP 2)
 - [x] Per-page extraction step implemented (spec block: PIPELINE STEP 3)
+- [x] Deterministic rule engine step implemented (spec block: PIPELINE STEP 4)
