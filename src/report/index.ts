@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { buildDiffReport, renderDiffReport, type DiffReport } from "./diff.js";
+import { renderReportHtml } from "./html.js";
 import { renderReportJson } from "./json.js";
 import { renderReportLlm } from "./llm.js";
 import { renderReportMarkdown } from "./md.js";
@@ -54,10 +55,12 @@ export async function writeRunReports(runDir: string, report: Report): Promise<v
   const json = renderReportJson(report);
   const markdown = renderReportMarkdown(report);
   const llm = renderReportLlm(report);
+  const html = renderReportHtml(report);
 
   await writeFile(path.join(runDir, "report.json"), `${json}\n`, "utf-8");
   await writeFile(path.join(runDir, "report.md"), `${markdown}\n`, "utf-8");
   await writeFile(path.join(runDir, "report.llm.txt"), `${llm}\n`, "utf-8");
+  await writeFile(path.join(runDir, "report.html"), `${html}\n`, "utf-8");
 }
 
 export async function writeRunDiffArtifacts(runDir: string, baselineReport: Report, currentReport: Report): Promise<void> {

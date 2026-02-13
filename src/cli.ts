@@ -92,6 +92,7 @@ async function run(): Promise<void> {
       console.log(`Canonical report: ${result.runDir}/report.json`);
       console.log(`Markdown report: ${result.runDir}/report.md`);
       console.log(`LLM report: ${result.runDir}/report.llm.txt`);
+      console.log(`HTML report: ${result.runDir}/report.html`);
       console.log(`Inputs: ${result.runDir}/inputs.json`);
     });
 
