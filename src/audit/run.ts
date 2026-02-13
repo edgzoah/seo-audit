@@ -479,8 +479,18 @@ function issueDeduction(issue: Issue): number {
   const rank = Math.max(1, Math.min(10, issue.rank)) / 10;
   const volume = Math.log(1 + affectedCount);
   const multiplier = getIssueWeight(issue);
+  const issueSpecificWeight =
+    issue.id === "title_length_out_of_range" || issue.id === "description_length_out_of_range"
+      ? 0.45
+      : issue.id === "robots_meta_xrobots_conflict" || issue.id === "canonical_to_non_200"
+        ? 1.35
+        : issue.id === "focus_inlinks_count_low" || issue.id === "orphan_page" || issue.id === "near_orphan_page"
+          ? 1.25
+          : issue.id === "thin_content"
+            ? 1.2
+            : 1.0;
   const scale = 8;
-  return severity * rank * volume * multiplier * scale;
+  return severity * rank * volume * multiplier * issueSpecificWeight * scale;
 }
 
 function buildCategoryScores(issues: Issue[], performanceScore: number | null): Record<string, number> {
@@ -506,17 +516,24 @@ function buildCategoryScores(issues: Issue[], performanceScore: number | null): 
   };
 }
 
-function buildFocusSummary(input: { issues: Issue[]; focusUrl: string | null; inlinkUrls: Set<string> }): Report["summary"]["focus"] {
+function buildFocusSummary(input: {
+  issues: Issue[];
+  focusUrl: string | null;
+  inlinkUrls: Set<string>;
+  pages: PageExtract[];
+  focusInlinksCount: number;
+  performanceFocus: PerformanceSnapshot;
+}): Report["summary"]["focus"] {
   if (!input.focusUrl) {
     return undefined;
   }
 
   const neighborhood = new Set<string>([input.focusUrl, ...Array.from(input.inlinkUrls)]);
-  const focusIssues = input.issues.filter((issue) => issue.affected_urls.some((url) => neighborhood.has(url)));
-  const focusDeduction = focusIssues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
+  const focusNeighborhoodIssues = input.issues.filter((issue) => issue.affected_urls.some((url) => neighborhood.has(url)));
+  const focusDeduction = focusNeighborhoodIssues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
   const focusScore = clampScore(100 - focusDeduction);
 
-  const focusTopIssues = [...focusIssues]
+  const focusTopIssues = [...focusNeighborhoodIssues]
     .sort((a, b) => {
       const delta = issueDeduction(b) - issueDeduction(a);
       if (delta !== 0) {
@@ -529,10 +546,29 @@ function buildFocusSummary(input: { issues: Issue[]; focusUrl: string | null; in
     .slice(0, 5);
 
   const recommendedNextActions: Action[] = [];
+  const focusPage = input.pages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === input.focusUrl);
+  const focusDirectIssues = input.issues.filter((issue) => issue.affected_urls.some((url) => url === input.focusUrl || url === focusPage?.url));
+  const hasCriticalIndexationConflict = focusDirectIssues.some(
+    (issue) =>
+      (issue.category === "indexation_conflicts" || issue.category === "indexability") &&
+      (issue.severity === "error" || issue.severity === "warning"),
+  );
+  const hasTitleH1Mismatch = focusDirectIssues.some((issue) => issue.id === "title_h1_mismatch");
+  const hasThinContent = focusDirectIssues.some((issue) => issue.id === "thin_content");
+  const inlinksOk = input.focusInlinksCount >= 5;
+  const lighthouseMeasured = input.performanceFocus.status === "measured";
+  const lighthouseGood =
+    lighthouseMeasured &&
+    (input.performanceFocus.lcpMs ?? Infinity) <= 2500 &&
+    (input.performanceFocus.inpMs ?? Infinity) <= 200 &&
+    (input.performanceFocus.cls ?? Infinity) <= 0.1;
+  const upliftChecks = [!hasCriticalIndexationConflict, inlinksOk, !hasTitleH1Mismatch, !hasThinContent, !lighthouseMeasured || lighthouseGood];
+  const focusUpliftScore = clampScore((upliftChecks.filter(Boolean).length / upliftChecks.length) * 100);
 
   return {
     primary_url: input.focusUrl,
     focus_score: focusScore,
+    focus_uplift_score: focusUpliftScore,
     focus_top_issues: focusTopIssues,
     recommended_next_actions: recommendedNextActions,
     focusInlinksCount: 0,
@@ -704,6 +740,9 @@ function buildCanonicalReport(input: {
     issues: input.issues,
     focusUrl: input.focusUrl,
     inlinkUrls: input.inlinkUrls,
+    pages: input.pages,
+    focusInlinksCount: input.focusInlinksCount,
+    performanceFocus: input.performanceFocus,
   });
   const focusSummaryWithGraph = focusSummary
     ? {

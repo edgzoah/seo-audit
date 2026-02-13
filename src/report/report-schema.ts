@@ -254,6 +254,7 @@ export interface LlmProposalPacks {
 export interface FocusSummary {
   primary_url: string;
   focus_score: number;
+  focus_uplift_score?: number;
   focus_top_issues: string[];
   recommended_next_actions: Action[];
   focusInlinksCount?: number;
