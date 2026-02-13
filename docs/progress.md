@@ -5,3 +5,4 @@
 - [x] Resolve brief + focus step implemented (spec block: PIPELINE STEP 0)
 - [x] Seed discovery step implemented (spec block: PIPELINE STEP 1)
 - [x] Crawl step implemented (spec block: PIPELINE STEP 2)
+- [x] Per-page extraction step implemented (spec block: PIPELINE STEP 3)

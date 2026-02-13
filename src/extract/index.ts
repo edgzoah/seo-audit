@@ -2,6 +2,14 @@ import { load } from "cheerio";
 
 import type { HeadingOutlineItem, PageExtract } from "../report/report-schema.js";
 
+const SECURITY_HEADERS = [
+  "strict-transport-security",
+  "content-security-policy",
+  "x-content-type-options",
+  "x-frame-options",
+  "referrer-policy",
+] as const;
+
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -14,7 +22,85 @@ function safeUrl(baseUrl: string, href: string): string | null {
   }
 }
 
-export function extractPageData(html: string, requestedUrl: string, finalUrl: string, status: number): PageExtract {
+function collectMixedContentCandidates(html: string, finalUrl: string): string[] {
+  if (!finalUrl.startsWith("https://")) {
+    return [];
+  }
+
+  const $ = load(html);
+  const candidates = new Set<string>();
+
+  const selectors: Array<{ selector: string; attr: "src" | "href" }> = [
+    { selector: "img[src]", attr: "src" },
+    { selector: "script[src]", attr: "src" },
+    { selector: "link[href]", attr: "href" },
+    { selector: "iframe[src]", attr: "src" },
+  ];
+
+  for (const entry of selectors) {
+    $(entry.selector).each((_, element) => {
+      const raw = $(element).attr(entry.attr)?.trim();
+      if (!raw) {
+        return;
+      }
+      const resolved = safeUrl(finalUrl, raw);
+      if (resolved && resolved.startsWith("http://")) {
+        candidates.add(resolved);
+      }
+    });
+  }
+
+  return Array.from(candidates).sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function collectLargeImageCandidates(html: string, finalUrl: string): string[] {
+  const $ = load(html);
+  const candidates = new Set<string>();
+
+  $("img[src]").each((_, element) => {
+    const rawSrc = $(element).attr("src")?.trim();
+    if (!rawSrc) {
+      return;
+    }
+
+    const width = Number.parseInt($(element).attr("width") ?? "", 10);
+    const height = Number.parseInt($(element).attr("height") ?? "", 10);
+    if (!Number.isInteger(width) || !Number.isInteger(height)) {
+      return;
+    }
+
+    if (width * height < 1_000_000) {
+      return;
+    }
+
+    const resolved = safeUrl(finalUrl, rawSrc);
+    if (resolved) {
+      candidates.add(resolved);
+    }
+  });
+
+  return Array.from(candidates).sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function normalizeHeaders(responseHeaders?: Record<string, string>): Record<string, string> {
+  if (!responseHeaders) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(responseHeaders)) {
+    normalized[key.toLowerCase()] = value;
+  }
+  return normalized;
+}
+
+export function extractPageData(
+  html: string,
+  requestedUrl: string,
+  finalUrl: string,
+  status: number,
+  responseHeaders?: Record<string, string>,
+): PageExtract {
   const $ = load(html);
 
   const titleRaw = $("title").first().text();
@@ -66,6 +152,10 @@ export function extractPageData(html: string, requestedUrl: string, finalUrl: st
       externalTargets.add(resolved);
     }
   });
+
+  const normalizedHeaders = normalizeHeaders(responseHeaders);
+  const securityHeadersPresent = SECURITY_HEADERS.filter((header) => Boolean(normalizedHeaders[header]));
+  const securityHeadersMissing = SECURITY_HEADERS.filter((header) => !normalizedHeaders[header]);
 
   const jsonldBlocks: string[] = [];
   const detectedSchemaTypes = new Set<string>();
@@ -127,29 +217,29 @@ export function extractPageData(html: string, requestedUrl: string, finalUrl: st
     meta_description: metaDescription,
     meta_robots: metaRobots,
     canonical,
-    hreflang_links: hreflangLinks,
+    hreflang_links: hreflangLinks.sort((a, b) => a.localeCompare(b, "en")),
     headings_outline: headingsOutline,
     links: {
       internal_count: internalTargets.size,
       external_count: externalTargets.size,
-      internal_targets: Array.from(internalTargets),
-      external_targets: Array.from(externalTargets),
+      internal_targets: Array.from(internalTargets).sort((a, b) => a.localeCompare(b, "en")),
+      external_targets: Array.from(externalTargets).sort((a, b) => a.localeCompare(b, "en")),
     },
     images: {
       count: $("img").length,
       missing_alt_count: $("img:not([alt]), img[alt='']").length,
-      large_image_candidates: [],
+      large_image_candidates: collectLargeImageCandidates(html, finalUrl),
     },
     schema: {
       jsonld_blocks: jsonldBlocks,
-      detected_schema_types: Array.from(detectedSchemaTypes),
+      detected_schema_types: Array.from(detectedSchemaTypes).sort((a, b) => a.localeCompare(b, "en")),
       json_parse_failures: jsonParseFailures,
     },
     security: {
       is_https: finalUrl.startsWith("https://"),
-      mixed_content_candidates: [],
-      security_headers_present: [],
-      security_headers_missing: [],
+      mixed_content_candidates: collectMixedContentCandidates(html, finalUrl),
+      security_headers_present: [...securityHeadersPresent],
+      security_headers_missing: [...securityHeadersMissing],
     },
   };
 }

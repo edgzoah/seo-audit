@@ -156,7 +156,7 @@ function buildCanonicalReport(input: {
   startedAt: string;
   finishedAt: string;
   inputs: AuditInputs;
-  page: PageExtract;
+  pages: PageExtract[];
   issues: Issue[];
 }): Report {
   const errors = input.issues.filter((issue) => issue.severity === "error").length;
@@ -179,21 +179,19 @@ function buildCanonicalReport(input: {
         security: scoreTotal,
         performance: scoreTotal,
       },
-      pages_crawled: 1,
+      pages_crawled: input.pages.length,
       errors,
       warnings,
       notices,
     },
     issues: input.issues,
-    pages: [
-      {
-        url: input.page.url,
-        final_url: input.page.final_url,
-        status: input.page.status,
-        title: input.page.title,
-        canonical: input.page.canonical,
-      },
-    ],
+    pages: input.pages.map((page) => ({
+      url: page.url,
+      final_url: page.final_url,
+      status: page.status,
+      title: page.title,
+      canonical: page.canonical,
+    })),
   };
 }
 
@@ -218,15 +216,16 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const crawlJsonl = crawl.events.map((event) => JSON.stringify(event)).join("\n");
   await writeFile(path.join(runDir, "crawl.jsonl"), crawlJsonl.length > 0 ? `${crawlJsonl}\n` : "", "utf-8");
 
-  const firstPage = crawl.pages[0];
-  if (!firstPage) {
+  if (crawl.pages.length === 0) {
     throw new Error("Crawl did not return any fetchable pages.");
   }
 
-  const extracted = extractPageData(firstPage.html, firstPage.url, firstPage.final_url, firstPage.status);
-  const issues = runRules(extracted);
+  const extractedPages = crawl.pages.map((page) =>
+    extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
+  );
+  const issues = runRules(extractedPages[0]);
 
-  await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify([extracted], null, 2)}\n`, "utf-8");
+  await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(extractedPages, null, 2)}\n`, "utf-8");
   await writeFile(path.join(runDir, "issues.json"), `${JSON.stringify(issues, null, 2)}\n`, "utf-8");
 
   const finishedAt = new Date().toISOString();
@@ -235,7 +234,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     startedAt: startedAtDate.toISOString(),
     finishedAt,
     inputs,
-    page: extracted,
+    pages: extractedPages,
     issues,
   });
 
