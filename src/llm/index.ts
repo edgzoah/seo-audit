@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -104,7 +104,7 @@ function runProcess(command: string, args: string[], cwd: string): Promise<Codex
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
     let stdout = "";
@@ -140,24 +140,96 @@ async function runCodexWithPromptFiles(input: {
   payloadFilePath: string;
 }): Promise<CodexRunResult> {
   const command = process.env.SEO_AUDIT_CODEX_CMD ?? "codex";
+  const promptText = await readFile(input.promptFilePath, "utf-8");
+  const outputFileName = "llm.codex.last-message.txt";
+  const outputFilePath = path.join(input.runDir, outputFileName);
 
-  const strategies: string[][] = [
-    ["run", "--prompt-file", input.promptFilePath, "--input-file", input.payloadFilePath],
-    ["--prompt-file", input.promptFilePath, "--input-file", input.payloadFilePath],
-    [input.promptFilePath, input.payloadFilePath],
+  const strategies: Array<{ args: string[]; stdinText: string | null }> = [
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: `${promptText.trim()}\n\nPayload file: ${path.basename(input.payloadFilePath)}\n`,
+    },
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName],
+      stdinText: `${promptText.trim()}\n\nPayload file: ${path.basename(input.payloadFilePath)}\n`,
+    },
+    {
+      args: ["exec", promptText.trim(), "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: null,
+    },
   ];
 
-  for (const args of strategies) {
-    const result = await runProcess(command, args, input.runDir);
+  let lastError = "Failed to execute codex CLI using supported argument patterns.";
+  for (const strategy of strategies) {
+    const result = await new Promise<CodexRunResult>((resolve) => {
+      const child = spawn(command, strategy.args, {
+        cwd: input.runDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+      });
+
+      child.on("error", (error) => {
+        resolve({
+          ok: false,
+          stdout,
+          stderr: `${stderr}\n${error.message}`.trim(),
+        });
+      });
+
+      child.on("close", async (code) => {
+        if (code !== 0) {
+          resolve({
+            ok: false,
+            stdout,
+            stderr,
+          });
+          return;
+        }
+
+        try {
+          const lastMessage = await readFile(outputFilePath, "utf-8");
+          resolve({
+            ok: true,
+            stdout: lastMessage,
+            stderr,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          resolve({
+            ok: false,
+            stdout,
+            stderr: `${stderr}\n${message}`.trim(),
+          });
+        }
+      });
+
+      if (strategy.stdinText !== null) {
+        child.stdin.write(strategy.stdinText);
+      }
+      child.stdin.end();
+    });
+
     if (result.ok) {
       return result;
+    }
+    if (result.stderr.trim().length > 0) {
+      lastError = result.stderr.trim();
     }
   }
 
   return {
     ok: false,
     stdout: "",
-    stderr: "Failed to execute codex CLI using supported argument patterns.",
+    stderr: lastError,
   };
 }
 
