@@ -111,6 +111,14 @@ Select provider:
 SEO_AUDIT_LLM_PROVIDER=codex|openai|gemini|claude
 ```
 
+Prompt profile (cost/quality tradeoff):
+
+```bash
+SEO_AUDIT_LLM_PROMPT_PROFILE=cheap|quality
+```
+
+Default: `cheap`.
+
 API keys:
 
 ```bash

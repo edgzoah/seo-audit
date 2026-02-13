@@ -10,6 +10,7 @@ export interface LlmGenerationResult {
 }
 
 type LlmProvider = "codex" | "openai" | "gemini" | "claude";
+type PromptProfile = "cheap" | "quality";
 
 interface LlmRunResult {
   ok: boolean;
@@ -17,10 +18,19 @@ interface LlmRunResult {
   errorText: string;
 }
 
-const MAX_ISSUES_FOR_LLM = 50;
-const MAX_EVIDENCE_PER_ISSUE = 3;
-const MAX_AFFECTED_URLS_PER_ISSUE = 5;
-const MAX_PAGES_FOR_LLM = 120;
+interface OutputLimits {
+  maxProposedFixes: number;
+  maxPrioritizedActions: number;
+  maxRationaleChars: number;
+}
+
+const PROMPT_VERSION = "v1.2.0";
+const COMPACTION_LIMITS = {
+  max_issues: 50,
+  max_evidence_per_issue: 3,
+  max_affected_urls_per_issue: 5,
+  max_pages: 120,
+} as const;
 
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
@@ -37,154 +47,6 @@ function severityOrder(severity: "error" | "warning" | "notice"): number {
     default:
       return 0;
   }
-}
-
-function sanitizeContextPayload(report: Report): Record<string, unknown> {
-  const compactIssues = [...report.issues]
-    .sort((a, b) => {
-      const severityDelta = severityOrder(b.severity) - severityOrder(a.severity);
-      if (severityDelta !== 0) {
-        return severityDelta;
-      }
-      const rankDelta = b.rank - a.rank;
-      if (rankDelta !== 0) {
-        return rankDelta;
-      }
-      return a.id.localeCompare(b.id, "en");
-    })
-    .slice(0, MAX_ISSUES_FOR_LLM)
-    .map((issue) => ({
-      id: issue.id,
-      category: issue.category,
-      severity: issue.severity,
-      rank: issue.rank,
-      title: issue.title,
-      description: issue.description,
-      recommendation: issue.recommendation,
-      tags: [...issue.tags].sort(compareStrings),
-      affected_urls: issue.affected_urls.slice(0, MAX_AFFECTED_URLS_PER_ISSUE),
-      affected_urls_total: issue.affected_urls.length,
-      evidence: issue.evidence.slice(0, MAX_EVIDENCE_PER_ISSUE).map((item) => ({
-        type: item.type,
-        message: item.message,
-        url: item.url,
-        source_url: item.source_url,
-        target_url: item.target_url,
-        status: item.status,
-      })),
-    }));
-
-  const compactPages = [...report.pages]
-    .sort((a, b) => a.url.localeCompare(b.url, "en"))
-    .slice(0, MAX_PAGES_FOR_LLM)
-    .map((page) => ({
-      url: page.url,
-      final_url: page.final_url,
-      status: page.status,
-      title: page.title,
-      canonical: page.canonical,
-    }));
-
-  return {
-    run_id: report.run_id,
-    summary: report.summary,
-    focus: report.inputs.brief.focus,
-    issue_count_total: report.issues.length,
-    issues: compactIssues,
-    page_count_total: report.pages.length,
-    pages: compactPages,
-    limits: {
-      issues: MAX_ISSUES_FOR_LLM,
-      evidence_per_issue: MAX_EVIDENCE_PER_ISSUE,
-      affected_urls_per_issue: MAX_AFFECTED_URLS_PER_ISSUE,
-      pages: MAX_PAGES_FOR_LLM,
-    },
-  };
-}
-
-function parseJsonLoose(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new Error("Empty LLM output.");
-  }
-
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    const firstBrace = trimmed.indexOf("{");
-    const lastBrace = trimmed.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-      throw new Error("No JSON object found in LLM output.");
-    }
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as unknown;
-  }
-}
-
-function toActionArray(value: unknown): Action[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const parsed: Action[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-    const record = item as Record<string, unknown>;
-    const title = typeof record.title === "string" ? record.title : null;
-    const impact = record.impact === "high" || record.impact === "medium" || record.impact === "low" ? record.impact : null;
-    const effort = record.effort === "high" || record.effort === "medium" || record.effort === "low" ? record.effort : null;
-    const rationale = typeof record.rationale === "string" ? record.rationale : null;
-    if (title && impact && effort && rationale) {
-      parsed.push({ title, impact, effort, rationale });
-    }
-  }
-  return parsed;
-}
-
-function toProposedFixArray(value: unknown): ProposedFix[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const parsed: ProposedFix[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-    const record = item as Record<string, unknown>;
-    const issueId = typeof record.issue_id === "string" ? record.issue_id : null;
-    const pageUrl = typeof record.page_url === "string" ? record.page_url : null;
-    const proposal = typeof record.proposal === "string" ? record.proposal : null;
-    const rationale = typeof record.rationale === "string" ? record.rationale : null;
-    if (issueId && pageUrl && proposal && rationale) {
-      parsed.push({
-        issue_id: issueId,
-        page_url: pageUrl,
-        proposal,
-        rationale,
-      });
-    }
-  }
-  return parsed;
-}
-
-function normalizeLlmOutput(raw: unknown): LlmGenerationResult {
-  if (!raw || typeof raw !== "object") {
-    return { proposed_fixes: [], prioritized_actions: [] };
-  }
-
-  const record = raw as Record<string, unknown>;
-  const proposedFixes = toProposedFixArray(record.proposed_fixes);
-  const proposedFixesAlt = proposedFixes.length > 0 ? proposedFixes : toProposedFixArray(record.proposedFixes);
-  const proposedFixesFinal = proposedFixesAlt.length > 0 ? proposedFixesAlt : toProposedFixArray(record.focus_proposals);
-
-  const prioritizedActions = toActionArray(record.prioritized_actions);
-  const prioritizedActionsAlt = prioritizedActions.length > 0 ? prioritizedActions : toActionArray(record.prioritizedActions);
-  const prioritizedActionsFinal = prioritizedActionsAlt.length > 0 ? prioritizedActionsAlt : toActionArray(record.global_actions);
-
-  return {
-    proposed_fixes: proposedFixesFinal,
-    prioritized_actions: prioritizedActionsFinal,
-  };
 }
 
 function resolveProvider(): LlmProvider {
@@ -213,22 +75,270 @@ function resolveProvider(): LlmProvider {
   return "codex";
 }
 
+function resolvePromptProfile(): PromptProfile {
+  const raw = process.env.SEO_AUDIT_LLM_PROMPT_PROFILE?.trim().toLowerCase();
+  return raw === "quality" ? "quality" : "cheap";
+}
+
+function outputLimitsForProfile(profile: PromptProfile): OutputLimits {
+  if (profile === "quality") {
+    return {
+      maxProposedFixes: 12,
+      maxPrioritizedActions: 10,
+      maxRationaleChars: 420,
+    };
+  }
+
+  return {
+    maxProposedFixes: 8,
+    maxPrioritizedActions: 6,
+    maxRationaleChars: 220,
+  };
+}
+
+function trimText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…";
+}
+
+function sanitizeContextPayload(input: {
+  report: Report;
+  provider: LlmProvider;
+  profile: PromptProfile;
+  outputLimits: OutputLimits;
+}): Record<string, unknown> {
+  const report = input.report;
+
+  const compactIssues = [...report.issues]
+    .sort((a, b) => {
+      const severityDelta = severityOrder(b.severity) - severityOrder(a.severity);
+      if (severityDelta !== 0) {
+        return severityDelta;
+      }
+      const rankDelta = b.rank - a.rank;
+      if (rankDelta !== 0) {
+        return rankDelta;
+      }
+      return a.id.localeCompare(b.id, "en");
+    })
+    .slice(0, COMPACTION_LIMITS.max_issues)
+    .map((issue) => ({
+      id: issue.id,
+      category: issue.category,
+      severity: issue.severity,
+      rank: issue.rank,
+      title: issue.title,
+      description: issue.description,
+      recommendation: issue.recommendation,
+      tags: [...issue.tags].sort(compareStrings),
+      affected_urls: issue.affected_urls.slice(0, COMPACTION_LIMITS.max_affected_urls_per_issue),
+      affected_urls_total: issue.affected_urls.length,
+      evidence: issue.evidence.slice(0, COMPACTION_LIMITS.max_evidence_per_issue).map((item) => ({
+        type: item.type,
+        message: item.message,
+        url: item.url,
+        source_url: item.source_url,
+        target_url: item.target_url,
+        status: item.status,
+      })),
+    }));
+
+  const compactPages = [...report.pages]
+    .sort((a, b) => a.url.localeCompare(b.url, "en"))
+    .slice(0, COMPACTION_LIMITS.max_pages)
+    .map((page) => ({
+      url: page.url,
+      final_url: page.final_url,
+      status: page.status,
+      title: page.title,
+      canonical: page.canonical,
+    }));
+
+  return {
+    meta: {
+      prompt_version: PROMPT_VERSION,
+      provider: input.provider,
+      prompt_profile: input.profile,
+      payload_compaction_limits: COMPACTION_LIMITS,
+      output_limits: input.outputLimits,
+    },
+    run_id: report.run_id,
+    summary: report.summary,
+    focus: report.inputs.brief.focus,
+    issue_count_total: report.issues.length,
+    issues: compactIssues,
+    page_count_total: report.pages.length,
+    pages: compactPages,
+  };
+}
+
+function parseJsonLoose(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Empty LLM output.");
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const firstBrace = trimmed.indexOf("{");
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      throw new Error("No JSON object found in LLM output.");
+    }
+    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as unknown;
+  }
+}
+
+function toActionArray(value: unknown, limits: OutputLimits): Action[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const parsed: Action[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const title = typeof record.title === "string" ? trimText(record.title, 120) : null;
+    const impact = record.impact === "high" || record.impact === "medium" || record.impact === "low" ? record.impact : null;
+    const effort = record.effort === "high" || record.effort === "medium" || record.effort === "low" ? record.effort : null;
+    const rationale = typeof record.rationale === "string" ? trimText(record.rationale, limits.maxRationaleChars) : null;
+    if (title && impact && effort && rationale) {
+      parsed.push({ title, impact, effort, rationale });
+    }
+  }
+  return parsed.slice(0, limits.maxPrioritizedActions);
+}
+
+function toProposedFixArray(input: {
+  value: unknown;
+  limits: OutputLimits;
+  validIssueIds: Set<string>;
+  validPageUrls: Set<string>;
+}): ProposedFix[] {
+  if (!Array.isArray(input.value)) {
+    return [];
+  }
+  const parsed: ProposedFix[] = [];
+  for (const item of input.value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const issueId = typeof record.issue_id === "string" ? record.issue_id : null;
+    const pageUrl = typeof record.page_url === "string" ? record.page_url : null;
+    const proposal = typeof record.proposal === "string" ? trimText(record.proposal, 280) : null;
+    const rationale = typeof record.rationale === "string" ? trimText(record.rationale, input.limits.maxRationaleChars) : null;
+
+    // Evidence-only guard: issue/page must map to known payload entities.
+    if (!issueId || !pageUrl || !input.validIssueIds.has(issueId) || !input.validPageUrls.has(pageUrl)) {
+      continue;
+    }
+
+    if (proposal && rationale) {
+      parsed.push({
+        issue_id: issueId,
+        page_url: pageUrl,
+        proposal,
+        rationale,
+      });
+    }
+  }
+  return parsed.slice(0, input.limits.maxProposedFixes);
+}
+
+function normalizeLlmOutput(input: {
+  raw: unknown;
+  limits: OutputLimits;
+  report: Report;
+}): LlmGenerationResult {
+  if (!input.raw || typeof input.raw !== "object") {
+    return { proposed_fixes: [], prioritized_actions: [] };
+  }
+
+  const validIssueIds = new Set(input.report.issues.map((issue) => issue.id));
+  const validPageUrls = new Set(input.report.pages.map((page) => page.url));
+  const record = input.raw as Record<string, unknown>;
+
+  const proposedFixes = toProposedFixArray({
+    value: record.proposed_fixes,
+    limits: input.limits,
+    validIssueIds,
+    validPageUrls,
+  });
+  const proposedFixesAlt =
+    proposedFixes.length > 0
+      ? proposedFixes
+      : toProposedFixArray({
+          value: record.proposedFixes,
+          limits: input.limits,
+          validIssueIds,
+          validPageUrls,
+        });
+  const proposedFixesFinal =
+    proposedFixesAlt.length > 0
+      ? proposedFixesAlt
+      : toProposedFixArray({
+          value: record.focus_proposals,
+          limits: input.limits,
+          validIssueIds,
+          validPageUrls,
+        });
+
+  const prioritizedActions = toActionArray(record.prioritized_actions, input.limits);
+  const prioritizedActionsAlt = prioritizedActions.length > 0 ? prioritizedActions : toActionArray(record.prioritizedActions, input.limits);
+  const prioritizedActionsFinal = prioritizedActionsAlt.length > 0 ? prioritizedActionsAlt : toActionArray(record.global_actions, input.limits);
+
+  return {
+    proposed_fixes: proposedFixesFinal,
+    prioritized_actions: prioritizedActionsFinal,
+  };
+}
+
+function providerInstruction(provider: LlmProvider): string {
+  if (provider === "codex") {
+    return "Provider note: You can read local files in run directory. Keep output JSON-only.";
+  }
+  return "Provider note: NO markdown, NO prose wrapper, NO code fences. JSON object only.";
+}
+
 function buildMainPrompt(input: {
   contextFiles: string[];
   payloadFileName: string;
   focusUrl: string | null;
+  provider: LlmProvider;
+  profile: PromptProfile;
+  outputLimits: OutputLimits;
 }): string {
-  const focusLine = input.focusUrl
-    ? `Focus page: ${input.focusUrl}. Include focus-specific proposals as required.`
-    : "No focus page provided. Return only site-wide proposals.";
+  const focusRules = input.focusUrl
+    ? [
+        "FOCUS_RULES:",
+        `- Focus page: ${input.focusUrl}`,
+        '- Prefer issues tagged as "focus" and "inlink" when proposing fixes.',
+      ]
+    : ["FOCUS_RULES:", "- No focus page provided. Generate only site-wide proposals."];
 
   return [
-    "You are generating SEO audit proposals.",
-    "Use only evidence present in the payload report JSON.",
-    "Payload is compacted for token efficiency; prioritize high-severity and high-rank items first.",
-    "Return STRICT JSON only. No markdown, no prose outside JSON.",
+    "SYSTEM_RULES:",
+    "- STRICT JSON only.",
+    "- No claims without evidence from payload.",
+    "- If evidence is insufficient, omit candidate.",
+    `- Prompt profile: ${input.profile}.`,
+    providerInstruction(input.provider),
     "",
-    "Required JSON shape:",
+    "TASK_RULES:",
+    `- Generate up to ${input.outputLimits.maxProposedFixes} proposed_fixes.`,
+    `- Generate up to ${input.outputLimits.maxPrioritizedActions} prioritized_actions.`,
+    `- Keep each rationale <= ${input.outputLimits.maxRationaleChars} chars.`,
+    "- Use only payload evidence and issue/page mapping.",
+    "",
+    ...focusRules,
+    "",
+    "OUTPUT_CONTRACT (must match):",
     "{",
     '  "proposed_fixes": [',
     '    { "issue_id": "string", "page_url": "string", "proposal": "string", "rationale": "string" }',
@@ -238,12 +348,10 @@ function buildMainPrompt(input: {
     "  ]",
     "}",
     "",
-    `${focusLine}`,
-    "",
-    "Context files:",
+    "CONTEXT_FILES:",
     ...input.contextFiles.map((filePath) => `- ${filePath}`),
     "",
-    `Input payload file: ${input.payloadFileName}`,
+    `INPUT_PAYLOAD_FILE: ${input.payloadFileName}`,
   ].join("\n");
 }
 
@@ -251,12 +359,15 @@ function buildRepairPrompt(input: {
   contextFiles: string[];
   payloadFileName: string;
   brokenOutputFileName: string;
+  provider: LlmProvider;
 }): string {
   return [
-    "Repair invalid model output into STRICT JSON.",
-    "Do not add commentary. Output JSON only.",
+    "SYSTEM_RULES:",
+    "- Repair invalid model output into STRICT JSON.",
+    "- Output only JSON object, no markdown, no wrappers.",
+    providerInstruction(input.provider),
     "",
-    "Use the same required shape:",
+    "OUTPUT_CONTRACT:",
     "{",
     '  "proposed_fixes": [',
     '    { "issue_id": "string", "page_url": "string", "proposal": "string", "rationale": "string" }',
@@ -266,103 +377,11 @@ function buildRepairPrompt(input: {
     "  ]",
     "}",
     "",
-    "Context files:",
+    "CONTEXT_FILES:",
     ...input.contextFiles.map((filePath) => `- ${filePath}`),
-    `Payload file: ${input.payloadFileName}`,
-    `Broken output file: ${input.brokenOutputFileName}`,
+    `PAYLOAD_FILE: ${input.payloadFileName}`,
+    `BROKEN_OUTPUT_FILE: ${input.brokenOutputFileName}`,
   ].join("\n");
-}
-
-async function runCodexExec(input: {
-  runDir: string;
-  promptText: string;
-  payloadFileName: string;
-}): Promise<LlmRunResult> {
-  const command = process.env.SEO_AUDIT_CODEX_CMD ?? "codex";
-  const outputFileName = "llm.codex.last-message.txt";
-  const outputFilePath = path.join(input.runDir, outputFileName);
-
-  const strategies: Array<{ args: string[]; stdinText: string | null }> = [
-    {
-      args: ["exec", "-", "--output-last-message", outputFileName, "--skip-git-repo-check"],
-      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
-    },
-    {
-      args: ["exec", "-", "--output-last-message", outputFileName],
-      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
-    },
-    {
-      args: ["exec", input.promptText.trim(), "--output-last-message", outputFileName, "--skip-git-repo-check"],
-      stdinText: null,
-    },
-  ];
-
-  let lastError = "Failed to execute codex CLI using supported argument patterns.";
-  for (const strategy of strategies) {
-    const result = await new Promise<LlmRunResult>((resolve) => {
-      const child = spawn(command, strategy.args, {
-        cwd: input.runDir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      let stderr = "";
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        stderr += chunk.toString();
-      });
-      child.on("error", (error) => {
-        resolve({
-          ok: false,
-          outputText: "",
-          errorText: `${stderr}\n${error.message}`.trim(),
-        });
-      });
-
-      child.on("close", async (code) => {
-        if (code !== 0) {
-          resolve({
-            ok: false,
-            outputText: "",
-            errorText: stderr.trim(),
-          });
-          return;
-        }
-
-        try {
-          const lastMessage = await readFile(outputFilePath, "utf-8");
-          resolve({
-            ok: true,
-            outputText: lastMessage,
-            errorText: stderr.trim(),
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          resolve({
-            ok: false,
-            outputText: "",
-            errorText: `${stderr}\n${message}`.trim(),
-          });
-        }
-      });
-
-      if (strategy.stdinText !== null) {
-        child.stdin.write(strategy.stdinText);
-      }
-      child.stdin.end();
-    });
-
-    if (result.ok) {
-      return result;
-    }
-    if (result.errorText.length > 0) {
-      lastError = result.errorText;
-    }
-  }
-
-  return {
-    ok: false,
-    outputText: "",
-    errorText: lastError,
-  };
 }
 
 function extractOpenAiText(responseBody: unknown): string {
@@ -492,6 +511,98 @@ async function runClaudeApi(promptText: string): Promise<LlmRunResult> {
   }
 }
 
+async function runCodexExec(input: {
+  runDir: string;
+  promptText: string;
+  payloadFileName: string;
+}): Promise<LlmRunResult> {
+  const command = process.env.SEO_AUDIT_CODEX_CMD ?? "codex";
+  const outputFileName = "llm.codex.last-message.txt";
+  const outputFilePath = path.join(input.runDir, outputFileName);
+
+  const strategies: Array<{ args: string[]; stdinText: string | null }> = [
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
+    },
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName],
+      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
+    },
+    {
+      args: ["exec", input.promptText.trim(), "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: null,
+    },
+  ];
+
+  let lastError = "Failed to execute codex CLI using supported argument patterns.";
+  for (const strategy of strategies) {
+    const result = await new Promise<LlmRunResult>((resolve) => {
+      const child = spawn(command, strategy.args, {
+        cwd: input.runDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (error) => {
+        resolve({
+          ok: false,
+          outputText: "",
+          errorText: `${stderr}\n${error.message}`.trim(),
+        });
+      });
+
+      child.on("close", async (code) => {
+        if (code !== 0) {
+          resolve({
+            ok: false,
+            outputText: "",
+            errorText: stderr.trim(),
+          });
+          return;
+        }
+
+        try {
+          const lastMessage = await readFile(outputFilePath, "utf-8");
+          resolve({
+            ok: true,
+            outputText: lastMessage,
+            errorText: stderr.trim(),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          resolve({
+            ok: false,
+            outputText: "",
+            errorText: `${stderr}\n${message}`.trim(),
+          });
+        }
+      });
+
+      if (strategy.stdinText !== null) {
+        child.stdin.write(strategy.stdinText);
+      }
+      child.stdin.end();
+    });
+
+    if (result.ok) {
+      return result;
+    }
+    if (result.errorText.length > 0) {
+      lastError = result.errorText;
+    }
+  }
+
+  return {
+    ok: false,
+    outputText: "",
+    errorText: lastError,
+  };
+}
+
 async function runProviderPrompt(input: {
   provider: LlmProvider;
   runDir: string;
@@ -507,12 +618,7 @@ async function runProviderPrompt(input: {
     });
   }
 
-  const promptWithPayload = [
-    input.promptText,
-    "",
-    "Payload JSON (compact):",
-    input.payloadJsonText,
-  ].join("\n");
+  const promptWithPayload = [input.promptText, "", "Payload JSON (compact):", input.payloadJsonText].join("\n");
 
   if (input.provider === "openai") {
     return await runOpenAiApi(promptWithPayload);
@@ -528,7 +634,11 @@ export async function generateOptionalLlmProposals(input: {
   report: Report;
 }): Promise<LlmGenerationResult | null> {
   const provider = resolveProvider();
+  const profile = resolvePromptProfile();
+  const outputLimits = outputLimitsForProfile(profile);
+
   await writeFile(path.join(input.runDir, "llm.provider.txt"), `${provider}\n`, "utf-8");
+  await writeFile(path.join(input.runDir, "llm.prompt.version.txt"), `${PROMPT_VERSION}\n`, "utf-8");
 
   const contextFiles = [
     path.join(process.cwd(), "docs", "seo-values.md"),
@@ -536,7 +646,12 @@ export async function generateOptionalLlmProposals(input: {
     path.join(process.cwd(), "docs", "workflow.md"),
   ];
 
-  const contextPayload = sanitizeContextPayload(input.report);
+  const contextPayload = sanitizeContextPayload({
+    report: input.report,
+    provider,
+    profile,
+    outputLimits,
+  });
   const payloadJsonText = JSON.stringify(contextPayload, null, 2);
 
   const payloadFileName = "llm.input.json";
@@ -549,6 +664,9 @@ export async function generateOptionalLlmProposals(input: {
     contextFiles,
     payloadFileName,
     focusUrl: input.report.inputs.brief.focus.primary_url,
+    provider,
+    profile,
+    outputLimits,
   });
   await writeFile(promptFilePath, `${mainPrompt}\n`, "utf-8");
 
@@ -566,7 +684,11 @@ export async function generateOptionalLlmProposals(input: {
 
   try {
     const parsed = parseJsonLoose(firstRun.outputText);
-    return normalizeLlmOutput(parsed);
+    return normalizeLlmOutput({
+      raw: parsed,
+      limits: outputLimits,
+      report: input.report,
+    });
   } catch {
     await writeFile(path.join(input.runDir, "llm.raw.txt"), `${firstRun.outputText}\n`, "utf-8");
     const repairPromptFileName = "llm.repair.prompt.txt";
@@ -575,6 +697,7 @@ export async function generateOptionalLlmProposals(input: {
       contextFiles,
       payloadFileName,
       brokenOutputFileName: "llm.raw.txt",
+      provider,
     });
     await writeFile(repairPromptFilePath, `${repairPrompt}\n`, "utf-8");
 
@@ -592,7 +715,11 @@ export async function generateOptionalLlmProposals(input: {
 
     try {
       const repaired = parseJsonLoose(secondRun.outputText);
-      return normalizeLlmOutput(repaired);
+      return normalizeLlmOutput({
+        raw: repaired,
+        limits: outputLimits,
+        report: input.report,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await writeFile(path.join(input.runDir, "llm.error.log"), `${message}\n`, "utf-8");

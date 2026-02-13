@@ -12,3 +12,4 @@
 - [x] Optional LLM proposals via Codex CLI implemented (spec block: PIPELINE STEP 7)
 - [x] Report generation step implemented (spec block: PIPELINE STEP 8)
 - [x] LLM codex exec integration fix applied (operational compatibility)
+- [x] LLM preprompt governance and token-control profile implemented
