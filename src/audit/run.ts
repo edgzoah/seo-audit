@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { crawlSite, discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
-import type { AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
+import type { Action, AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
 import { writeRunReports } from "../report/index.js";
 import { runRules } from "../rules/index.js";
 
@@ -98,6 +98,109 @@ function getIssueWeight(issue: Issue): number {
     return 1.3;
   }
   return 1.0;
+}
+
+function clampScore(value: number): number {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 100) {
+    return 100;
+  }
+  return Math.round(value * 10) / 10;
+}
+
+function severityWeight(severity: Issue["severity"]): number {
+  switch (severity) {
+    case "error":
+      return 1.0;
+    case "warning":
+      return 0.7;
+    case "notice":
+      return 0.4;
+    default:
+      return 0.4;
+  }
+}
+
+function categoryToScoreBucket(category: string): "seo" | "technical" | "content" | "security" | "performance" {
+  if (category === "seo" || category === "indexability" || category === "schema") {
+    return "seo";
+  }
+  if (category === "content") {
+    return "content";
+  }
+  if (category === "security") {
+    return "security";
+  }
+  if (category === "technical") {
+    return "technical";
+  }
+  return "technical";
+}
+
+function issueDeduction(issue: Issue): number {
+  const affectedCount = Math.max(1, issue.affected_urls.length);
+  const severity = severityWeight(issue.severity);
+  const rank = Math.max(1, Math.min(10, issue.rank)) / 10;
+  const volume = Math.log(1 + affectedCount);
+  const multiplier = getIssueWeight(issue);
+  const scale = 8;
+  return severity * rank * volume * multiplier * scale;
+}
+
+function buildCategoryScores(issues: Issue[]): Record<string, number> {
+  const deductions: Record<string, number> = {
+    seo: 0,
+    technical: 0,
+    content: 0,
+    security: 0,
+    performance: 0,
+  };
+
+  for (const issue of issues) {
+    const bucket = categoryToScoreBucket(issue.category);
+    deductions[bucket] += issueDeduction(issue);
+  }
+
+  return {
+    seo: clampScore(100 - deductions.seo),
+    technical: clampScore(100 - deductions.technical),
+    content: clampScore(100 - deductions.content),
+    security: clampScore(100 - deductions.security),
+    performance: 100,
+  };
+}
+
+function buildFocusSummary(input: { issues: Issue[]; focusUrl: string | null; inlinkUrls: Set<string> }): Report["summary"]["focus"] {
+  if (!input.focusUrl) {
+    return undefined;
+  }
+
+  const neighborhood = new Set<string>([input.focusUrl, ...Array.from(input.inlinkUrls)]);
+  const focusIssues = input.issues.filter((issue) => issue.affected_urls.some((url) => neighborhood.has(url)));
+  const focusDeduction = focusIssues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
+  const focusScore = clampScore(100 - focusDeduction);
+
+  const focusTopIssues = [...focusIssues]
+    .sort((a, b) => {
+      const delta = issueDeduction(b) - issueDeduction(a);
+      if (delta !== 0) {
+        return delta;
+      }
+      return a.id.localeCompare(b.id, "en");
+    })
+    .slice(0, 5)
+    .map((issue) => issue.id);
+
+  const recommendedNextActions: Action[] = [];
+
+  return {
+    primary_url: input.focusUrl,
+    focus_score: focusScore,
+    focus_top_issues: focusTopIssues,
+    recommended_next_actions: recommendedNextActions,
+  };
 }
 
 function buildRunId(now: Date = new Date()): string {
@@ -221,16 +324,21 @@ function buildCanonicalReport(input: {
   inputs: AuditInputs;
   pages: PageExtract[];
   issues: Issue[];
+  focusUrl: string | null;
+  inlinkUrls: Set<string>;
 }): Report {
   const errors = input.issues.filter((issue) => issue.severity === "error").length;
   const warnings = input.issues.filter((issue) => issue.severity === "warning").length;
   const notices = input.issues.filter((issue) => issue.severity === "notice").length;
 
-  const deduction = input.issues.reduce((sum, issue) => {
-    const base = issue.severity === "error" ? 10 : issue.severity === "warning" ? 5 : 2;
-    return sum + base * getIssueWeight(issue);
-  }, 0);
-  const scoreTotal = Math.max(0, Math.round((100 - deduction) * 10) / 10);
+  const scoreByCategory = buildCategoryScores(input.issues);
+  const totalDeduction = input.issues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
+  const scoreTotal = clampScore(100 - totalDeduction);
+  const focusSummary = buildFocusSummary({
+    issues: input.issues,
+    focusUrl: input.focusUrl,
+    inlinkUrls: input.inlinkUrls,
+  });
 
   return {
     run_id: input.runId,
@@ -239,17 +347,12 @@ function buildCanonicalReport(input: {
     inputs: input.inputs,
     summary: {
       score_total: scoreTotal,
-      score_by_category: {
-        seo: scoreTotal,
-        technical: scoreTotal,
-        content: scoreTotal,
-        security: scoreTotal,
-        performance: scoreTotal,
-      },
+      score_by_category: scoreByCategory,
       pages_crawled: input.pages.length,
       errors,
       warnings,
       notices,
+      focus: focusSummary,
     },
     issues: input.issues,
     pages: input.pages.map((page) => ({
@@ -310,6 +413,8 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     inputs,
     pages: extractedPages,
     issues,
+    focusUrl,
+    inlinkUrls,
   });
 
   await writeRunReports(runDir, report);

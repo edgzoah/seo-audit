@@ -8,3 +8,4 @@
 - [x] Per-page extraction step implemented (spec block: PIPELINE STEP 3)
 - [x] Deterministic rule engine step implemented (spec block: PIPELINE STEP 4)
 - [x] Focus-aware weighting step implemented (spec block: PIPELINE STEP 5)
+- [x] Scoring step implemented (spec block: PIPELINE STEP 6)
