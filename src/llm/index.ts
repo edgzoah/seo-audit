@@ -2,11 +2,12 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-import type { Action, ProposedFix, Report } from "../report/report-schema.js";
+import type { Action, LlmProposalPacks, PageExtract, ProposedFix, Report } from "../report/report-schema.js";
 
 export interface LlmGenerationResult {
   proposed_fixes: ProposedFix[];
   prioritized_actions: Action[];
+  proposed_packs?: LlmProposalPacks;
 }
 
 type LlmProvider = "codex" | "openai" | "gemini" | "claude";
@@ -34,6 +35,60 @@ const COMPACTION_LIMITS = {
 
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
+}
+
+function normalizeUrl(raw: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    return new URL(raw).toString();
+  } catch {
+    return null;
+  }
+}
+
+function findFocusPage(report: Report): PageExtract | null {
+  const focusUrl = normalizeUrl(report.inputs.brief.focus.primary_url);
+  if (!focusUrl || !report.page_extracts) {
+    return null;
+  }
+  return report.page_extracts.find((page) => normalizeUrl(page.final_url) === focusUrl || normalizeUrl(page.url) === focusUrl) ?? null;
+}
+
+function buildFocusNeighborhood(report: Report, focusPage: PageExtract | null): Array<{ url: string; title: string | null; topHeadings: string[] }> {
+  if (!focusPage || !report.page_extracts) {
+    return [];
+  }
+
+  const sourceScores = new Map<string, number>();
+  for (const page of report.page_extracts) {
+    for (const link of page.outlinksInternal) {
+      if (normalizeUrl(link.targetUrl) === normalizeUrl(focusPage.final_url)) {
+        sourceScores.set(page.final_url, (sourceScores.get(page.final_url) ?? 0) + 1);
+      }
+    }
+  }
+
+  const topSources = Array.from(sourceScores.entries())
+    .sort((a, b) => {
+      const countDelta = b[1] - a[1];
+      if (countDelta !== 0) {
+        return countDelta;
+      }
+      return compareStrings(a[0], b[0]);
+    })
+    .slice(0, 10)
+    .map(([url]) => url);
+
+  return topSources
+    .map((url) => report.page_extracts?.find((page) => page.final_url === url || page.url === url))
+    .filter((page): page is PageExtract => Boolean(page))
+    .map((page) => ({
+      url: page.final_url,
+      title: page.titleText || page.title,
+      topHeadings: page.headings_outline.slice(0, 5).map((item) => item.text),
+    }));
 }
 
 function severityOrder(severity: "error" | "warning" | "notice"): number {
@@ -111,6 +166,11 @@ function sanitizeContextPayload(input: {
   outputLimits: OutputLimits;
 }): Record<string, unknown> {
   const report = input.report;
+  const focusPage = findFocusPage(report);
+  const focusNeighborhood = buildFocusNeighborhood(report, focusPage);
+  const focusIssueIds = new Set(
+    report.issues.filter((issue) => issue.tags.includes("focus") || issue.tags.includes("inlink")).map((issue) => issue.id),
+  );
 
   const compactIssues = [...report.issues]
     .sort((a, b) => {
@@ -168,6 +228,28 @@ function sanitizeContextPayload(input: {
     run_id: report.run_id,
     summary: report.summary,
     focus: report.inputs.brief.focus,
+    focus_page_extract: focusPage
+      ? {
+          url: focusPage.url,
+          final_url: focusPage.final_url,
+          titleText: focusPage.titleText,
+          headingTextConcat: focusPage.headingTextConcat,
+          mainText: trimText(focusPage.mainText, 4000),
+          headings_outline: focusPage.headings_outline.slice(0, 20),
+          inlinksCount: focusPage.inlinksCount,
+          inlinksAnchorsTop: focusPage.inlinksAnchorsTop.slice(0, 10),
+          outlinksInternal: focusPage.outlinksInternal.slice(0, 40),
+          outlinksExternal: focusPage.outlinksExternal.slice(0, 20),
+          schemaTypesDetected: focusPage.schemaTypesDetected,
+          htmlLang: focusPage.htmlLang,
+          lighthouse: focusPage.lighthouse ?? null,
+        }
+      : null,
+    focus_internal_link_neighborhood: focusNeighborhood,
+    focus_and_global_priority_issues: compactIssues
+      .filter((issue) => focusIssueIds.has(issue.id))
+      .concat(compactIssues.slice(0, 10))
+      .slice(0, 20),
     issue_count_total: report.issues.length,
     issues: compactIssues,
     page_count_total: report.pages.length,
@@ -251,6 +333,128 @@ function toProposedFixArray(input: {
   return parsed.slice(0, input.limits.maxProposedFixes);
 }
 
+function toStringArray(value: unknown, maxItems: number, maxChars = 180): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => trimText(item, maxChars))
+    .filter((item) => item.length > 0)
+    .slice(0, maxItems);
+}
+
+function toProposedPacks(value: unknown): LlmProposalPacks | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const root = value as Record<string, unknown>;
+  const packs: LlmProposalPacks = {};
+
+  const serp = root.focus_serp_pack as Record<string, unknown> | undefined;
+  if (serp && typeof serp === "object") {
+    const titles = Array.isArray(serp.titles)
+      ? serp.titles
+          .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+          .map((item) => ({
+            title: trimText(typeof item.title === "string" ? item.title : "", 140),
+            rationale: trimText(typeof item.rationale === "string" ? item.rationale : "", 220),
+            nonNegotiableWords: toStringArray(item.nonNegotiableWords, 10, 40),
+          }))
+          .filter((item) => item.title.length > 0)
+          .slice(0, 5)
+      : [];
+    const metaDescriptions = Array.isArray(serp.meta_descriptions)
+      ? serp.meta_descriptions
+          .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+          .map((item) => {
+            const tone: "informational" | "sales" | "neutral" =
+              item.tone === "informational" || item.tone === "sales" || item.tone === "neutral" ? item.tone : "neutral";
+            return {
+              tone,
+              text: trimText(typeof item.text === "string" ? item.text : "", 220),
+            };
+          })
+          .filter((item) => item.text.length > 0)
+          .slice(0, 3)
+      : [];
+    const fallbacks = toStringArray(serp.suggested_snippet_fallbacks, 3, 100);
+    if (titles.length > 0 || metaDescriptions.length > 0 || fallbacks.length > 0) {
+      packs.focus_serp_pack = {
+        titles,
+        meta_descriptions: metaDescriptions,
+        suggested_snippet_fallbacks: fallbacks,
+      };
+    }
+  }
+
+  const outline = root.focus_outline_pack as Record<string, unknown> | undefined;
+  if (outline && typeof outline === "object") {
+    const outlineList = toStringArray(outline.outline, 20, 140);
+    const intentMapRaw = outline.intent_coverage_mapping;
+    const intentMap: Record<string, string> = {};
+    if (intentMapRaw && typeof intentMapRaw === "object" && !Array.isArray(intentMapRaw)) {
+      for (const [key, value] of Object.entries(intentMapRaw)) {
+        if (typeof value === "string" && key.trim().length > 0) {
+          intentMap[trimText(key, 120)] = trimText(value, 160);
+        }
+      }
+    }
+    const faqQuestions = toStringArray(outline.faq_questions, 12, 160);
+    if (outlineList.length > 0 || faqQuestions.length > 0 || Object.keys(intentMap).length > 0) {
+      packs.focus_outline_pack = {
+        outline: outlineList,
+        intent_coverage_mapping: intentMap,
+        faq_questions: faqQuestions,
+      };
+    }
+  }
+
+  const internalLinkPlan = Array.isArray(root.internal_link_plan)
+    ? root.internal_link_plan
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .map((item) => ({
+          sourceUrl: typeof item.sourceUrl === "string" ? item.sourceUrl : "",
+          suggestedAnchor: trimText(typeof item.suggestedAnchor === "string" ? item.suggestedAnchor : "", 100),
+          suggestedSentenceContext: trimText(typeof item.suggestedSentenceContext === "string" ? item.suggestedSentenceContext : "", 220),
+        }))
+        .filter((item) => item.sourceUrl.length > 0 && item.suggestedAnchor.length > 0)
+        .slice(0, 10)
+    : [];
+  if (internalLinkPlan.length > 0) {
+    packs.internal_link_plan = internalLinkPlan;
+  }
+
+  const entityPack = root.entity_local_pack as Record<string, unknown> | undefined;
+  if (entityPack && typeof entityPack === "object") {
+    const checklist = toStringArray(entityPack.trust_elements_checklist, 15, 180);
+    const schemaSuggestions = toStringArray(entityPack.schema_suggestions, 10, 180);
+    if (checklist.length > 0 || schemaSuggestions.length > 0) {
+      packs.entity_local_pack = {
+        trust_elements_checklist: checklist,
+        schema_suggestions: schemaSuggestions,
+      };
+    }
+  }
+
+  const cannibalization = Array.isArray(root.cannibalization_flags)
+    ? root.cannibalization_flags
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .map((item) => ({
+          pageA: typeof item.pageA === "string" ? item.pageA : "",
+          pageB: typeof item.pageB === "string" ? item.pageB : "",
+          differentiationApproach: trimText(typeof item.differentiationApproach === "string" ? item.differentiationApproach : "", 220),
+        }))
+        .filter((item) => item.pageA.length > 0 && item.pageB.length > 0)
+        .slice(0, 10)
+    : [];
+  if (cannibalization.length > 0) {
+    packs.cannibalization_flags = cannibalization;
+  }
+
+  return Object.keys(packs).length > 0 ? packs : undefined;
+}
+
 function normalizeLlmOutput(input: {
   raw: unknown;
   limits: OutputLimits;
@@ -292,10 +496,12 @@ function normalizeLlmOutput(input: {
   const prioritizedActions = toActionArray(record.prioritized_actions, input.limits);
   const prioritizedActionsAlt = prioritizedActions.length > 0 ? prioritizedActions : toActionArray(record.prioritizedActions, input.limits);
   const prioritizedActionsFinal = prioritizedActionsAlt.length > 0 ? prioritizedActionsAlt : toActionArray(record.global_actions, input.limits);
+  const proposedPacks = toProposedPacks(record.proposed_packs);
 
   return {
     proposed_fixes: proposedFixesFinal,
     prioritized_actions: prioritizedActionsFinal,
+    proposed_packs: proposedPacks,
   };
 }
 
@@ -335,6 +541,9 @@ function buildMainPrompt(input: {
     `- Generate up to ${input.outputLimits.maxPrioritizedActions} prioritized_actions.`,
     `- Keep each rationale <= ${input.outputLimits.maxRationaleChars} chars.`,
     "- Use only payload evidence and issue/page mapping.",
+    "- Include structured packs in proposed_packs when evidence is sufficient.",
+    "- Do not fabricate metrics or claim fixed Google length requirements.",
+    "- Keep schema suggestions consistent with visible page content only.",
     "",
     ...focusRules,
     "",
@@ -343,6 +552,21 @@ function buildMainPrompt(input: {
     '  "proposed_fixes": [',
     '    { "issue_id": "string", "page_url": "string", "proposal": "string", "rationale": "string" }',
     "  ],",
+    '  "proposed_packs": {',
+    '    "focus_serp_pack": {',
+    '      "titles": [{ "title": "string", "rationale": "string", "nonNegotiableWords": ["string"] }],',
+    '      "meta_descriptions": [{ "tone": "informational|sales|neutral", "text": "string" }],',
+    '      "suggested_snippet_fallbacks": ["string"]',
+    "    },",
+    '    "focus_outline_pack": {',
+    '      "outline": ["string"],',
+    '      "intent_coverage_mapping": { "question": "answer-intent mapping" },',
+    '      "faq_questions": ["string"]',
+    "    },",
+    '    "internal_link_plan": [{ "sourceUrl": "string", "suggestedAnchor": "string", "suggestedSentenceContext": "string" }],',
+    '    "entity_local_pack": { "trust_elements_checklist": ["string"], "schema_suggestions": ["string"] },',
+    '    "cannibalization_flags": [{ "pageA": "string", "pageB": "string", "differentiationApproach": "string" }]',
+    "  },",
     '  "prioritized_actions": [',
     '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string" }',
     "  ]",
@@ -372,6 +596,13 @@ function buildRepairPrompt(input: {
     '  "proposed_fixes": [',
     '    { "issue_id": "string", "page_url": "string", "proposal": "string", "rationale": "string" }',
     "  ],",
+    '  "proposed_packs": {',
+    '    "focus_serp_pack": { "titles": [], "meta_descriptions": [], "suggested_snippet_fallbacks": [] },',
+    '    "focus_outline_pack": { "outline": [], "intent_coverage_mapping": {}, "faq_questions": [] },',
+    '    "internal_link_plan": [],',
+    '    "entity_local_pack": { "trust_elements_checklist": [], "schema_suggestions": [] },',
+    '    "cannibalization_flags": []',
+    "  },",
     '  "prioritized_actions": [',
     '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string" }',
     "  ]",

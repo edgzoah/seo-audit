@@ -209,6 +209,48 @@ export interface ProposedFix {
   rationale: string;
 }
 
+export interface SerpTitleVariant {
+  title: string;
+  rationale: string;
+  nonNegotiableWords: string[];
+}
+
+export interface MetaDescriptionVariant {
+  tone: "informational" | "sales" | "neutral";
+  text: string;
+}
+
+export interface InternalLinkPlanItem {
+  sourceUrl: string;
+  suggestedAnchor: string;
+  suggestedSentenceContext: string;
+}
+
+export interface CannibalizationFlag {
+  pageA: string;
+  pageB: string;
+  differentiationApproach: string;
+}
+
+export interface LlmProposalPacks {
+  focus_serp_pack?: {
+    titles: SerpTitleVariant[];
+    meta_descriptions: MetaDescriptionVariant[];
+    suggested_snippet_fallbacks: string[];
+  };
+  focus_outline_pack?: {
+    outline: string[];
+    intent_coverage_mapping: Record<string, string>;
+    faq_questions: string[];
+  };
+  internal_link_plan?: InternalLinkPlanItem[];
+  entity_local_pack?: {
+    trust_elements_checklist: string[];
+    schema_suggestions: string[];
+  };
+  cannibalization_flags?: CannibalizationFlag[];
+}
+
 export interface FocusSummary {
   primary_url: string;
   focus_score: number;
@@ -265,6 +307,7 @@ export interface Report {
   summary: Summary;
   issues: Issue[];
   proposed_fixes?: ProposedFix[];
+  proposed_packs?: LlmProposalPacks;
   prioritized_actions?: Action[];
   pages: PageSummary[];
   page_extracts?: PageExtract[];

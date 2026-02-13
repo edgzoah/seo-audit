@@ -842,6 +842,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     if (llmOutput) {
       report.proposed_fixes = llmOutput.proposed_fixes;
       report.prioritized_actions = llmOutput.prioritized_actions;
+      report.proposed_packs = llmOutput.proposed_packs;
     }
   }
 
