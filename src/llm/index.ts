@@ -9,10 +9,12 @@ export interface LlmGenerationResult {
   prioritized_actions: Action[];
 }
 
-interface CodexRunResult {
+type LlmProvider = "codex" | "openai" | "gemini" | "claude";
+
+interface LlmRunResult {
   ok: boolean;
-  stdout: string;
-  stderr: string;
+  outputText: string;
+  errorText: string;
 }
 
 const MAX_ISSUES_FOR_LLM = 50;
@@ -185,137 +187,30 @@ function normalizeLlmOutput(raw: unknown): LlmGenerationResult {
   };
 }
 
-function runProcess(command: string, args: string[], cwd: string): Promise<CodexRunResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      resolve({
-        ok: false,
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
-      });
-    });
-
-    child.on("close", (code) => {
-      resolve({
-        ok: code === 0,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
-
-async function runCodexWithPromptFiles(input: {
-  runDir: string;
-  promptFilePath: string;
-  payloadFilePath: string;
-}): Promise<CodexRunResult> {
-  const command = process.env.SEO_AUDIT_CODEX_CMD ?? "codex";
-  const promptText = await readFile(input.promptFilePath, "utf-8");
-  const outputFileName = "llm.codex.last-message.txt";
-  const outputFilePath = path.join(input.runDir, outputFileName);
-
-  const strategies: Array<{ args: string[]; stdinText: string | null }> = [
-    {
-      args: ["exec", "-", "--output-last-message", outputFileName, "--skip-git-repo-check"],
-      stdinText: `${promptText.trim()}\n\nPayload file: ${path.basename(input.payloadFilePath)}\n`,
-    },
-    {
-      args: ["exec", "-", "--output-last-message", outputFileName],
-      stdinText: `${promptText.trim()}\n\nPayload file: ${path.basename(input.payloadFilePath)}\n`,
-    },
-    {
-      args: ["exec", promptText.trim(), "--output-last-message", outputFileName, "--skip-git-repo-check"],
-      stdinText: null,
-    },
-  ];
-
-  let lastError = "Failed to execute codex CLI using supported argument patterns.";
-  for (const strategy of strategies) {
-    const result = await new Promise<CodexRunResult>((resolve) => {
-      const child = spawn(command, strategy.args, {
-        cwd: input.runDir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (chunk: Buffer | string) => {
-        stdout += chunk.toString();
-      });
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        stderr += chunk.toString();
-      });
-
-      child.on("error", (error) => {
-        resolve({
-          ok: false,
-          stdout,
-          stderr: `${stderr}\n${error.message}`.trim(),
-        });
-      });
-
-      child.on("close", async (code) => {
-        if (code !== 0) {
-          resolve({
-            ok: false,
-            stdout,
-            stderr,
-          });
-          return;
-        }
-
-        try {
-          const lastMessage = await readFile(outputFilePath, "utf-8");
-          resolve({
-            ok: true,
-            stdout: lastMessage,
-            stderr,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          resolve({
-            ok: false,
-            stdout,
-            stderr: `${stderr}\n${message}`.trim(),
-          });
-        }
-      });
-
-      if (strategy.stdinText !== null) {
-        child.stdin.write(strategy.stdinText);
+function resolveProvider(): LlmProvider {
+  const explicit = process.env.SEO_AUDIT_LLM_PROVIDER?.trim().toLowerCase();
+  if (explicit) {
+    if (explicit === "codex" || explicit === "openai" || explicit === "gpt" || explicit === "gemini" || explicit === "claude" || explicit === "anthropic") {
+      if (explicit === "gpt") {
+        return "openai";
       }
-      child.stdin.end();
-    });
-
-    if (result.ok) {
-      return result;
-    }
-    if (result.stderr.trim().length > 0) {
-      lastError = result.stderr.trim();
+      if (explicit === "anthropic") {
+        return "claude";
+      }
+      return explicit;
     }
   }
 
-  return {
-    ok: false,
-    stdout: "",
-    stderr: lastError,
-  };
+  if (process.env.OPENAI_API_KEY) {
+    return "openai";
+  }
+  if (process.env.GEMINI_API_KEY) {
+    return "gemini";
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    return "claude";
+  }
+  return "codex";
 }
 
 function buildMainPrompt(input: {
@@ -378,10 +273,263 @@ function buildRepairPrompt(input: {
   ].join("\n");
 }
 
+async function runCodexExec(input: {
+  runDir: string;
+  promptText: string;
+  payloadFileName: string;
+}): Promise<LlmRunResult> {
+  const command = process.env.SEO_AUDIT_CODEX_CMD ?? "codex";
+  const outputFileName = "llm.codex.last-message.txt";
+  const outputFilePath = path.join(input.runDir, outputFileName);
+
+  const strategies: Array<{ args: string[]; stdinText: string | null }> = [
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
+    },
+    {
+      args: ["exec", "-", "--output-last-message", outputFileName],
+      stdinText: `${input.promptText.trim()}\n\nPayload file: ${input.payloadFileName}\n`,
+    },
+    {
+      args: ["exec", input.promptText.trim(), "--output-last-message", outputFileName, "--skip-git-repo-check"],
+      stdinText: null,
+    },
+  ];
+
+  let lastError = "Failed to execute codex CLI using supported argument patterns.";
+  for (const strategy of strategies) {
+    const result = await new Promise<LlmRunResult>((resolve) => {
+      const child = spawn(command, strategy.args, {
+        cwd: input.runDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (error) => {
+        resolve({
+          ok: false,
+          outputText: "",
+          errorText: `${stderr}\n${error.message}`.trim(),
+        });
+      });
+
+      child.on("close", async (code) => {
+        if (code !== 0) {
+          resolve({
+            ok: false,
+            outputText: "",
+            errorText: stderr.trim(),
+          });
+          return;
+        }
+
+        try {
+          const lastMessage = await readFile(outputFilePath, "utf-8");
+          resolve({
+            ok: true,
+            outputText: lastMessage,
+            errorText: stderr.trim(),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          resolve({
+            ok: false,
+            outputText: "",
+            errorText: `${stderr}\n${message}`.trim(),
+          });
+        }
+      });
+
+      if (strategy.stdinText !== null) {
+        child.stdin.write(strategy.stdinText);
+      }
+      child.stdin.end();
+    });
+
+    if (result.ok) {
+      return result;
+    }
+    if (result.errorText.length > 0) {
+      lastError = result.errorText;
+    }
+  }
+
+  return {
+    ok: false,
+    outputText: "",
+    errorText: lastError,
+  };
+}
+
+function extractOpenAiText(responseBody: unknown): string {
+  const root = responseBody as Record<string, unknown>;
+  const choices = Array.isArray(root.choices) ? (root.choices as Array<Record<string, unknown>>) : [];
+  const first = choices[0];
+  const message = first?.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  return typeof content === "string" ? content : "";
+}
+
+async function runOpenAiApi(promptText: string): Promise<LlmRunResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return { ok: false, outputText: "", errorText: "OPENAI_API_KEY is not set." };
+  }
+
+  const model = process.env.SEO_AUDIT_OPENAI_MODEL ?? "gpt-4o-mini";
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        messages: [
+          { role: "system", content: "Return STRICT JSON only." },
+          { role: "user", content: promptText },
+        ],
+      }),
+    });
+    const raw = (await response.text()) || "";
+    if (!response.ok) {
+      return { ok: false, outputText: "", errorText: raw };
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    const content = extractOpenAiText(parsed);
+    return { ok: true, outputText: content, errorText: "" };
+  } catch (error) {
+    return { ok: false, outputText: "", errorText: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function extractGeminiText(responseBody: unknown): string {
+  const root = responseBody as Record<string, unknown>;
+  const candidates = Array.isArray(root.candidates) ? (root.candidates as Array<Record<string, unknown>>) : [];
+  const first = candidates[0] ?? {};
+  const content = first.content as Record<string, unknown> | undefined;
+  const parts = Array.isArray(content?.parts) ? (content?.parts as Array<Record<string, unknown>>) : [];
+  return parts.map((part) => (typeof part.text === "string" ? part.text : "")).join("\n");
+}
+
+async function runGeminiApi(promptText: string): Promise<LlmRunResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { ok: false, outputText: "", errorText: "GEMINI_API_KEY is not set." };
+  }
+
+  const model = process.env.SEO_AUDIT_GEMINI_MODEL ?? "gemini-2.0-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0,
+        },
+      }),
+    });
+    const raw = (await response.text()) || "";
+    if (!response.ok) {
+      return { ok: false, outputText: "", errorText: raw };
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return { ok: true, outputText: extractGeminiText(parsed), errorText: "" };
+  } catch (error) {
+    return { ok: false, outputText: "", errorText: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function extractClaudeText(responseBody: unknown): string {
+  const root = responseBody as Record<string, unknown>;
+  const content = Array.isArray(root.content) ? (root.content as Array<Record<string, unknown>>) : [];
+  return content
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text as string)
+    .join("\n");
+}
+
+async function runClaudeApi(promptText: string): Promise<LlmRunResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { ok: false, outputText: "", errorText: "ANTHROPIC_API_KEY is not set." };
+  }
+
+  const model = process.env.SEO_AUDIT_CLAUDE_MODEL ?? "claude-3-5-sonnet-latest";
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2500,
+        temperature: 0,
+        messages: [{ role: "user", content: promptText }],
+      }),
+    });
+    const raw = (await response.text()) || "";
+    if (!response.ok) {
+      return { ok: false, outputText: "", errorText: raw };
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return { ok: true, outputText: extractClaudeText(parsed), errorText: "" };
+  } catch (error) {
+    return { ok: false, outputText: "", errorText: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function runProviderPrompt(input: {
+  provider: LlmProvider;
+  runDir: string;
+  promptText: string;
+  payloadFileName: string;
+  payloadJsonText: string;
+}): Promise<LlmRunResult> {
+  if (input.provider === "codex") {
+    return await runCodexExec({
+      runDir: input.runDir,
+      promptText: input.promptText,
+      payloadFileName: input.payloadFileName,
+    });
+  }
+
+  const promptWithPayload = [
+    input.promptText,
+    "",
+    "Payload JSON (compact):",
+    input.payloadJsonText,
+  ].join("\n");
+
+  if (input.provider === "openai") {
+    return await runOpenAiApi(promptWithPayload);
+  }
+  if (input.provider === "gemini") {
+    return await runGeminiApi(promptWithPayload);
+  }
+  return await runClaudeApi(promptWithPayload);
+}
+
 export async function generateOptionalLlmProposals(input: {
   runDir: string;
   report: Report;
 }): Promise<LlmGenerationResult | null> {
+  const provider = resolveProvider();
+  await writeFile(path.join(input.runDir, "llm.provider.txt"), `${provider}\n`, "utf-8");
+
   const contextFiles = [
     path.join(process.cwd(), "docs", "seo-values.md"),
     path.join(process.cwd(), "docs", "report-schema.md"),
@@ -389,62 +537,61 @@ export async function generateOptionalLlmProposals(input: {
   ];
 
   const contextPayload = sanitizeContextPayload(input.report);
+  const payloadJsonText = JSON.stringify(contextPayload, null, 2);
 
   const payloadFileName = "llm.input.json";
   const payloadFilePath = path.join(input.runDir, payloadFileName);
   const promptFileName = "llm.prompt.txt";
   const promptFilePath = path.join(input.runDir, promptFileName);
 
-  await writeFile(payloadFilePath, `${JSON.stringify(contextPayload, null, 2)}\n`, "utf-8");
-  await writeFile(
-    promptFilePath,
-    `${buildMainPrompt({
-      contextFiles,
-      payloadFileName,
-      focusUrl: input.report.inputs.brief.focus.primary_url,
-    })}\n`,
-    "utf-8",
-  );
+  await writeFile(payloadFilePath, `${payloadJsonText}\n`, "utf-8");
+  const mainPrompt = buildMainPrompt({
+    contextFiles,
+    payloadFileName,
+    focusUrl: input.report.inputs.brief.focus.primary_url,
+  });
+  await writeFile(promptFilePath, `${mainPrompt}\n`, "utf-8");
 
-  const firstRun = await runCodexWithPromptFiles({
+  const firstRun = await runProviderPrompt({
+    provider,
     runDir: input.runDir,
-    promptFilePath,
-    payloadFilePath,
+    promptText: mainPrompt,
+    payloadFileName,
+    payloadJsonText,
   });
   if (!firstRun.ok) {
-    await writeFile(path.join(input.runDir, "llm.error.log"), `${firstRun.stderr}\n`, "utf-8");
+    await writeFile(path.join(input.runDir, "llm.error.log"), `${firstRun.errorText}\n`, "utf-8");
     return null;
   }
 
   try {
-    const parsed = parseJsonLoose(firstRun.stdout);
+    const parsed = parseJsonLoose(firstRun.outputText);
     return normalizeLlmOutput(parsed);
   } catch {
-    await writeFile(path.join(input.runDir, "llm.raw.txt"), `${firstRun.stdout}\n`, "utf-8");
+    await writeFile(path.join(input.runDir, "llm.raw.txt"), `${firstRun.outputText}\n`, "utf-8");
     const repairPromptFileName = "llm.repair.prompt.txt";
     const repairPromptFilePath = path.join(input.runDir, repairPromptFileName);
-    await writeFile(
-      repairPromptFilePath,
-      `${buildRepairPrompt({
-        contextFiles,
-        payloadFileName,
-        brokenOutputFileName: "llm.raw.txt",
-      })}\n`,
-      "utf-8",
-    );
+    const repairPrompt = buildRepairPrompt({
+      contextFiles,
+      payloadFileName,
+      brokenOutputFileName: "llm.raw.txt",
+    });
+    await writeFile(repairPromptFilePath, `${repairPrompt}\n`, "utf-8");
 
-    const secondRun = await runCodexWithPromptFiles({
+    const secondRun = await runProviderPrompt({
+      provider,
       runDir: input.runDir,
-      promptFilePath: repairPromptFilePath,
-      payloadFilePath,
+      promptText: repairPrompt,
+      payloadFileName,
+      payloadJsonText,
     });
     if (!secondRun.ok) {
-      await writeFile(path.join(input.runDir, "llm.error.log"), `${secondRun.stderr}\n`, "utf-8");
+      await writeFile(path.join(input.runDir, "llm.error.log"), `${secondRun.errorText}\n`, "utf-8");
       return null;
     }
 
     try {
-      const repaired = parseJsonLoose(secondRun.stdout);
+      const repaired = parseJsonLoose(secondRun.outputText);
       return normalizeLlmOutput(repaired);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

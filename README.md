@@ -1,6 +1,6 @@
 # SEO Audit CLI
 
-Local CLI tool for deterministic SEO audits (crawl + extract + rule engine + scoring), with optional LLM proposals via Codex CLI.
+Local CLI tool for deterministic SEO audits (crawl + extract + rule engine + scoring), with optional LLM proposals via Codex CLI or API providers (GPT/OpenAI, Gemini, Claude).
 
 ## Requirements
 
@@ -92,23 +92,57 @@ This creates diff artifacts in the new run directory.
 
 When `--llm` is enabled:
 
-- audit calls Codex CLI in non-interactive mode (`codex exec`)
+- audit calls configured provider:
+  - `codex` (default fallback)
+  - `openai` / `gpt`
+  - `gemini`
+  - `claude` / `anthropic`
 - proposals are added to `report.json`:
   - `proposed_fixes`
   - `prioritized_actions`
 
-If Codex fails, deterministic audit still succeeds and LLM section is skipped.
+If LLM provider fails, deterministic audit still succeeds and LLM section is skipped.
+
+### Provider Configuration
+
+Select provider:
+
+```bash
+SEO_AUDIT_LLM_PROVIDER=codex|openai|gemini|claude
+```
+
+API keys:
+
+```bash
+OPENAI_API_KEY=...
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+```
+
+Optional model overrides:
+
+```bash
+SEO_AUDIT_OPENAI_MODEL=gpt-4o-mini
+SEO_AUDIT_GEMINI_MODEL=gemini-2.0-flash
+SEO_AUDIT_CLAUDE_MODEL=claude-3-5-sonnet-latest
+```
+
+If provider is not explicitly set, tool auto-selects in this order:
+1. `openai` (when `OPENAI_API_KEY` exists)
+2. `gemini` (when `GEMINI_API_KEY` exists)
+3. `claude` (when `ANTHROPIC_API_KEY` exists)
+4. `codex`
 
 ## LLM Troubleshooting
 
-- Check Codex CLI:
+- Check selected provider credentials and network access.
+- For Codex:
   - `codex --help`
   - `codex exec --help`
-- Ensure login/auth is configured for Codex CLI.
 - Check run logs:
   - `runs/<run-id>/llm.error.log`
   - `runs/<run-id>/llm.raw.txt` (if JSON repair path was used)
-- You can override command binary with:
+- For Codex, you can override command binary with:
   - `SEO_AUDIT_CODEX_CMD=codex`
 
 ## Notes
