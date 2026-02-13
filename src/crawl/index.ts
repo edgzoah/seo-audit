@@ -387,6 +387,15 @@ function extractInternalLinks(html: string, pageUrl: string): string[] {
 }
 
 function shouldAllowUrlForCrawl(url: string, inputs: AuditInputs, allowedHosts: Set<string>): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    if (pathname.startsWith("/cdn-cgi/")) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
   if (!isAllowedByDomain(url, allowedHosts)) {
     return false;
   }

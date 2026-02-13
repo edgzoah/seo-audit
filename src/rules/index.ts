@@ -332,151 +332,154 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   const statusByUrl = buildStatusMap(pages);
 
   for (const page of pages) {
+    const isOnPageAuditable = page.status >= 200 && page.status < 300;
     const titleLength = page.title?.trim().length ?? 0;
     const descriptionLength = page.meta_description?.trim().length ?? 0;
     const h1Count = page.headings_outline.filter((heading) => heading.level === 1).length;
     const canonicalNormalized = page.canonical ? safeUrl(page.final_url, page.canonical) ?? page.canonical : null;
 
-    if (!page.title || titleLength === 0) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "missing_title",
-          category: "seo",
-          severity: "error",
-          rank: 9,
-          title: "Missing <title>",
-          description: "Page does not define a title tag.",
-          evidence: [{ type: "content", message: "No <title> text extracted.", url: page.url }],
-          recommendation: "Add a unique, descriptive <title> tag.",
-        }),
-      );
-    } else if (titleLength < 20 || titleLength > 65) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "title_length_out_of_range",
-          category: "seo",
-          severity: "warning",
-          rank: 6,
-          title: "Title length out of range",
-          description: "Title length should be between 20 and 65 characters.",
-          evidence: [{ type: "content", message: `Title length is ${titleLength}.`, url: page.url }],
-          recommendation: "Adjust title length to keep it concise and descriptive.",
-        }),
-      );
-    }
+    if (isOnPageAuditable) {
+      if (!page.title || titleLength === 0) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "missing_title",
+            category: "seo",
+            severity: "error",
+            rank: 9,
+            title: "Missing <title>",
+            description: "Page does not define a title tag.",
+            evidence: [{ type: "content", message: "No <title> text extracted.", url: page.url }],
+            recommendation: "Add a unique, descriptive <title> tag.",
+          }),
+        );
+      } else if (titleLength < 20 || titleLength > 65) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "title_length_out_of_range",
+            category: "seo",
+            severity: "warning",
+            rank: 6,
+            title: "Title length out of range",
+            description: "Title length should be between 20 and 65 characters.",
+            evidence: [{ type: "content", message: `Title length is ${titleLength}.`, url: page.url }],
+            recommendation: "Adjust title length to keep it concise and descriptive.",
+          }),
+        );
+      }
 
-    if (!page.meta_description || descriptionLength === 0) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "missing_description",
-          category: "seo",
-          severity: "warning",
-          rank: 7,
-          title: "Missing meta description",
-          description: "Page does not define a meta description.",
-          evidence: [{ type: "content", message: "No meta description extracted.", url: page.url }],
-          recommendation: "Add a concise meta description aligned with search intent.",
-        }),
-      );
-    } else if (descriptionLength < 70 || descriptionLength > 165) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "description_length_out_of_range",
-          category: "seo",
-          severity: "notice",
-          rank: 4,
-          title: "Description length out of range",
-          description: "Meta description length should be between 70 and 165 characters.",
-          evidence: [{ type: "content", message: `Description length is ${descriptionLength}.`, url: page.url }],
-          recommendation: "Adjust description length to improve snippet quality.",
-        }),
-      );
-    }
+      if (!page.meta_description || descriptionLength === 0) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "missing_description",
+            category: "seo",
+            severity: "warning",
+            rank: 7,
+            title: "Missing meta description",
+            description: "Page does not define a meta description.",
+            evidence: [{ type: "content", message: "No meta description extracted.", url: page.url }],
+            recommendation: "Add a concise meta description aligned with search intent.",
+          }),
+        );
+      } else if (descriptionLength < 70 || descriptionLength > 165) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "description_length_out_of_range",
+            category: "seo",
+            severity: "notice",
+            rank: 4,
+            title: "Description length out of range",
+            description: "Meta description length should be between 70 and 165 characters.",
+            evidence: [{ type: "content", message: `Description length is ${descriptionLength}.`, url: page.url }],
+            recommendation: "Adjust description length to improve snippet quality.",
+          }),
+        );
+      }
 
-    if (h1Count === 0) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "missing_h1",
-          category: "content",
-          severity: "warning",
-          rank: 6,
-          title: "Missing H1 heading",
-          description: "Page does not include an H1 heading.",
-          evidence: [{ type: "content", message: "No heading level=1 found.", url: page.url }],
-          recommendation: "Add a single H1 that reflects the page topic.",
-        }),
-      );
-    } else if (h1Count > 1) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "multiple_h1",
-          category: "content",
-          severity: "warning",
-          rank: 5,
-          title: "Multiple H1 headings",
-          description: "Page has more than one H1 heading.",
-          evidence: [{ type: "content", message: `Detected ${h1Count} H1 headings.`, url: page.url }],
-          recommendation: "Use one H1 and move additional section titles to H2/H3.",
-        }),
-      );
-    }
+      if (h1Count === 0) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "missing_h1",
+            category: "content",
+            severity: "warning",
+            rank: 6,
+            title: "Missing H1 heading",
+            description: "Page does not include an H1 heading.",
+            evidence: [{ type: "content", message: "No heading level=1 found.", url: page.url }],
+            recommendation: "Add a single H1 that reflects the page topic.",
+          }),
+        );
+      } else if (h1Count > 1) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "multiple_h1",
+            category: "content",
+            severity: "warning",
+            rank: 5,
+            title: "Multiple H1 headings",
+            description: "Page has more than one H1 heading.",
+            evidence: [{ type: "content", message: `Detected ${h1Count} H1 headings.`, url: page.url }],
+            recommendation: "Use one H1 and move additional section titles to H2/H3.",
+          }),
+        );
+      }
 
-    if (hasHeadingSkip(page)) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "heading_level_skips",
-          category: "content",
-          severity: "notice",
-          rank: 3,
-          title: "Heading level skips detected",
-          description: "Heading levels skip hierarchy steps (e.g. H2 to H4).",
-          evidence: [{ type: "content", message: "Outline contains heading level jumps.", url: page.url }],
-          recommendation: "Maintain consistent heading hierarchy for readability and structure.",
-        }),
-      );
-    }
+      if (hasHeadingSkip(page)) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "heading_level_skips",
+            category: "content",
+            severity: "notice",
+            rank: 3,
+            title: "Heading level skips detected",
+            description: "Heading levels skip hierarchy steps (e.g. H2 to H4).",
+            evidence: [{ type: "content", message: "Outline contains heading level jumps.", url: page.url }],
+            recommendation: "Maintain consistent heading hierarchy for readability and structure.",
+          }),
+        );
+      }
 
-    if (!page.canonical) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "missing_canonical",
-          category: "seo",
-          severity: "notice",
-          rank: 4,
-          title: "Missing canonical URL",
-          description: "Page does not define rel=canonical.",
-          evidence: [{ type: "content", message: "No canonical tag extracted.", url: page.url }],
-          recommendation: "Add rel=canonical pointing to preferred URL.",
-        }),
-      );
-    } else if (canonicalNormalized && canonicalNormalized !== page.final_url) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "canonical_mismatch",
-          category: "seo",
-          severity: "warning",
-          rank: 6,
-          title: "Canonical mismatch",
-          description: "Canonical URL differs from the fetched final URL.",
-          evidence: [{ type: "content", message: `Canonical points to ${canonicalNormalized}.`, url: page.url }],
-          recommendation: "Align canonical URL with the intended primary URL.",
-        }),
-      );
-    }
+      if (!page.canonical) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "missing_canonical",
+            category: "seo",
+            severity: "notice",
+            rank: 4,
+            title: "Missing canonical URL",
+            description: "Page does not define rel=canonical.",
+            evidence: [{ type: "content", message: "No canonical tag extracted.", url: page.url }],
+            recommendation: "Add rel=canonical pointing to preferred URL.",
+          }),
+        );
+      } else if (canonicalNormalized && canonicalNormalized !== page.final_url) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "canonical_mismatch",
+            category: "seo",
+            severity: "warning",
+            rank: 6,
+            title: "Canonical mismatch",
+            description: "Canonical URL differs from the fetched final URL.",
+            evidence: [{ type: "content", message: `Canonical points to ${canonicalNormalized}.`, url: page.url }],
+            recommendation: "Align canonical URL with the intended primary URL.",
+          }),
+        );
+      }
 
-    if (parseMetaNoindex(page.meta_robots)) {
-      issues.push(
-        createSinglePageIssue(page, {
-          id: "meta_noindex",
-          category: "indexability",
-          severity: "error",
-          rank: 10,
-          title: "Meta robots contains noindex",
-          description: "Page is marked as non-indexable by meta robots.",
-          evidence: [{ type: "content", message: "Detected noindex token in robots meta.", url: page.url }],
-          recommendation: "Remove noindex if page should appear in search results.",
-        }),
-      );
+      if (parseMetaNoindex(page.meta_robots)) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "meta_noindex",
+            category: "indexability",
+            severity: "error",
+            rank: 10,
+            title: "Meta robots contains noindex",
+            description: "Page is marked as non-indexable by meta robots.",
+            evidence: [{ type: "content", message: "Detected noindex token in robots meta.", url: page.url }],
+            recommendation: "Remove noindex if page should appear in search results.",
+          }),
+        );
+      }
     }
 
     if (isBlockedByRobots(page.url, context.robotsDisallow)) {
@@ -509,7 +512,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       );
     }
 
-    if (page.images.missing_alt_count > 0) {
+    if (isOnPageAuditable && page.images.missing_alt_count > 0) {
       issues.push(
         createSinglePageIssue(page, {
           id: "images_missing_alt",
@@ -530,7 +533,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       );
     }
 
-    if (page.schema.json_parse_failures.length > 0) {
+    if (isOnPageAuditable && page.schema.json_parse_failures.length > 0) {
       issues.push(
         createSinglePageIssue(page, {
           id: "invalid_jsonld",
@@ -545,10 +548,8 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       );
     }
 
-    const hasOrganizationSchema = page.schema.detected_schema_types.some((type) =>
-      ["Organization", "LocalBusiness"].includes(type),
-    );
-    if (!hasOrganizationSchema) {
+    const hasOrganizationSchema = page.schema.detected_schema_types.some((type) => ["Organization", "LocalBusiness"].includes(type));
+    if (isOnPageAuditable && !hasOrganizationSchema) {
       issues.push(
         createSinglePageIssue(page, {
           id: "missing_org_schema",
@@ -565,7 +566,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
 
     const pathDepth = new URL(page.final_url).pathname.split("/").filter((segment) => segment.length > 0).length;
     const hasBreadcrumb = page.schema.detected_schema_types.includes("BreadcrumbList");
-    if (pathDepth >= 2 && !hasBreadcrumb) {
+    if (isOnPageAuditable && pathDepth >= 2 && !hasBreadcrumb) {
       issues.push(
         createSinglePageIssue(page, {
           id: "missing_breadcrumb_schema",

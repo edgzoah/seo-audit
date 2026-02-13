@@ -14,3 +14,4 @@
 - [x] LLM codex exec integration fix applied (operational compatibility)
 - [x] LLM preprompt governance and token-control profile implemented
 - [x] Robots/link-check false-positive fixes for Cloudflare patterns
+- [x] 404 on-page noise reduction + /cdn-cgi crawl exclusion + deduplicated focus top issues

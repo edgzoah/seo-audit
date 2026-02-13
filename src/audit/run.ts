@@ -191,8 +191,9 @@ function buildFocusSummary(input: { issues: Issue[]; focusUrl: string | null; in
       }
       return a.id.localeCompare(b.id, "en");
     })
-    .slice(0, 5)
-    .map((issue) => issue.id);
+    .map((issue) => issue.id)
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .slice(0, 5);
 
   const recommendedNextActions: Action[] = [];
 
