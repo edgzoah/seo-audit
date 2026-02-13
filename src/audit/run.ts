@@ -1,11 +1,23 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import path from "node:path";
 
 import { loadConfig } from "../config/index.js";
 import { crawlSite, discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
 import { generateOptionalLlmProposals } from "../llm/index.js";
-import type { Action, AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
+import type {
+  Action,
+  AuditInputs,
+  CoverageMode,
+  Issue,
+  LighthouseMetrics,
+  PageExtract,
+  PerformanceSnapshot,
+  RenderingMode,
+  Report,
+  ReportFormat,
+} from "../report/report-schema.js";
 import { loadReportFromRun, writeRunDiffArtifacts, writeRunReports } from "../report/index.js";
 import { runRules } from "../rules/index.js";
 
@@ -31,11 +43,17 @@ export interface AuditCliOptions {
   focusKeyword?: string;
   focusGoal?: string;
   constraints?: string;
+  lighthouse?: boolean;
 }
 
 interface ResolvedBriefFocus {
   briefText: string;
   primaryFocusUrl: string | null;
+}
+
+interface LighthouseRunResult {
+  measured: boolean;
+  metrics?: LighthouseMetrics;
 }
 
 const GENERIC_ANCHORS = new Set<string>([
@@ -70,6 +88,114 @@ function normalizeUrl(raw: string | null, baseUrl?: string): string | null {
 
 function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function parseLighthouseOutput(raw: string): LighthouseMetrics | null {
+  if (!raw || raw.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const categories = (parsed.categories ?? {}) as Record<string, { score?: number }>;
+    const audits = (parsed.audits ?? {}) as Record<string, { numericValue?: number }>;
+    const lcpMs = typeof audits["largest-contentful-paint"]?.numericValue === "number" ? audits["largest-contentful-paint"]?.numericValue : undefined;
+    const inpMs = typeof audits["interaction-to-next-paint"]?.numericValue === "number" ? audits["interaction-to-next-paint"]?.numericValue : undefined;
+    const cls = typeof audits["cumulative-layout-shift"]?.numericValue === "number" ? audits["cumulative-layout-shift"]?.numericValue : undefined;
+    const tbtMs = typeof audits["total-blocking-time"]?.numericValue === "number" ? audits["total-blocking-time"]?.numericValue : undefined;
+    const scorePerf = typeof categories.performance?.score === "number" ? Math.round(categories.performance.score * 100) : undefined;
+    const scoreA11y = typeof categories.accessibility?.score === "number" ? Math.round(categories.accessibility.score * 100) : undefined;
+    const scoreSeo = typeof categories.seo?.score === "number" ? Math.round(categories.seo.score * 100) : undefined;
+    const scoreBestPractices =
+      typeof categories["best-practices"]?.score === "number" ? Math.round(categories["best-practices"].score * 100) : undefined;
+
+    return {
+      lcpMs,
+      inpMs,
+      cls,
+      tbtMs,
+      scorePerf,
+      scoreA11y,
+      scoreSeo,
+      scoreBestPractices,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runLighthouse(url: string, timeoutMs: number): Promise<LighthouseRunResult> {
+  const commandPromise = new Promise<LighthouseRunResult>((resolve) => {
+    const args = [
+      url,
+      "--quiet",
+      "--output=json",
+      "--output-path=stdout",
+      "--chrome-flags=--headless=new --no-sandbox --disable-dev-shm-usage",
+      "--only-categories=performance,accessibility,best-practices,seo",
+    ];
+
+    const child = spawn("lighthouse", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+
+    child.on("error", () => {
+      resolve({ measured: false });
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve({ measured: false });
+        return;
+      }
+      const metrics = parseLighthouseOutput(stdout);
+      if (!metrics) {
+        resolve({ measured: false });
+        return;
+      }
+      resolve({ measured: true, metrics });
+    });
+  });
+
+  try {
+    return await withTimeout(commandPromise, timeoutMs);
+  } catch {
+    return { measured: false };
+  }
+}
+
+function toPerformanceSnapshot(result: LighthouseRunResult): PerformanceSnapshot {
+  if (!result.measured || !result.metrics) {
+    return {
+      status: "not_measured",
+      lcpMs: null,
+      inpMs: null,
+      cls: null,
+      scorePerf: null,
+    };
+  }
+  return {
+    status: "measured",
+    lcpMs: result.metrics.lcpMs ?? null,
+    inpMs: result.metrics.inpMs ?? null,
+    cls: result.metrics.cls ?? null,
+    scorePerf: result.metrics.scorePerf ?? null,
+  };
 }
 
 function normalizeAnchorValue(value: string): string {
@@ -357,7 +483,7 @@ function issueDeduction(issue: Issue): number {
   return severity * rank * volume * multiplier * scale;
 }
 
-function buildCategoryScores(issues: Issue[]): Record<string, number> {
+function buildCategoryScores(issues: Issue[], performanceScore: number | null): Record<string, number> {
   const deductions: Record<string, number> = {
     seo: 0,
     technical: 0,
@@ -376,7 +502,7 @@ function buildCategoryScores(issues: Issue[]): Record<string, number> {
     technical: clampScore(100 - deductions.technical),
     content: clampScore(100 - deductions.content),
     security: clampScore(100 - deductions.security),
-    performance: 100,
+    performance: performanceScore === null ? 0 : clampScore(performanceScore),
   };
 }
 
@@ -557,12 +683,21 @@ function buildCanonicalReport(input: {
     percentEmptyAnchors: number;
     topAnchors: Array<{ anchor: string; count: number }>;
   };
+  performanceFocus: PerformanceSnapshot;
+  performanceHome: PerformanceSnapshot;
 }): Report {
   const errors = input.issues.filter((issue) => issue.severity === "error").length;
   const warnings = input.issues.filter((issue) => issue.severity === "warning").length;
   const notices = input.issues.filter((issue) => issue.severity === "notice").length;
 
-  const scoreByCategory = buildCategoryScores(input.issues);
+  const performanceScoreCandidates = [input.performanceFocus.scorePerf, input.performanceHome.scorePerf].filter(
+    (value): value is number => typeof value === "number",
+  );
+  const performanceScore =
+    performanceScoreCandidates.length > 0
+      ? performanceScoreCandidates.reduce((sum, value) => sum + value, 0) / performanceScoreCandidates.length
+      : null;
+  const scoreByCategory = buildCategoryScores(input.issues, performanceScore);
   const totalDeduction = input.issues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
   const scoreTotal = clampScore(100 - totalDeduction);
   const focusSummary = buildFocusSummary({
@@ -593,6 +728,8 @@ function buildCanonicalReport(input: {
       notices,
       focus: focusSummaryWithGraph,
       internal_links: input.internalLinksSummary,
+      performanceFocus: input.performanceFocus,
+      performanceHome: input.performanceHome,
     },
     issues: input.issues,
     pages: input.pages.map((page) => ({
@@ -634,8 +771,34 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
-  const graph = buildInternalLinkGraph(extractedPages, normalizeUrl(inputs.brief.focus.primary_url, inputs.target));
-  const graphEnrichedPages = graph.pages;
+  const normalizedFocusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
+  const graph = buildInternalLinkGraph(extractedPages, normalizedFocusUrl);
+  let graphEnrichedPages = graph.pages;
+  const homeUrl = new URL("/", inputs.target).toString();
+  const shouldMeasureLighthouse = Boolean(options.lighthouse);
+  let focusLighthouse: LighthouseRunResult = { measured: false };
+  let homeLighthouse: LighthouseRunResult = { measured: false };
+  if (shouldMeasureLighthouse) {
+    [focusLighthouse, homeLighthouse] = await Promise.all([
+      normalizedFocusUrl ? runLighthouse(normalizedFocusUrl, inputs.timeout_ms * 2) : Promise.resolve({ measured: false }),
+      runLighthouse(homeUrl, inputs.timeout_ms * 2),
+    ]);
+  }
+
+  const measuredByUrl = new Map<string, LighthouseMetrics>();
+  if (normalizedFocusUrl && focusLighthouse.measured && focusLighthouse.metrics) {
+    measuredByUrl.set(normalizedFocusUrl, focusLighthouse.metrics);
+  }
+  if (homeLighthouse.measured && homeLighthouse.metrics) {
+    measuredByUrl.set(homeUrl, homeLighthouse.metrics);
+  }
+
+  graphEnrichedPages = graphEnrichedPages.map((page) => {
+    const pageNormalized = normalizeUrl(page.final_url) ?? page.final_url;
+    const lighthouse = measuredByUrl.get(pageNormalized);
+    return lighthouse ? { ...page, lighthouse } : page;
+  });
+
   const sitemapSeedUrls = seedDiscovery.discovered
     .filter((entry) => entry.source !== "start_url")
     .map((entry) => entry.url);
@@ -643,10 +806,10 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     pages: graphEnrichedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
     timeoutMs: inputs.timeout_ms,
-    focusUrl: normalizeUrl(inputs.brief.focus.primary_url, inputs.target),
+    focusUrl: normalizedFocusUrl,
     sitemapUrls: sitemapSeedUrls,
   });
-  const focusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
+  const focusUrl = normalizedFocusUrl;
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
   const issues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
 
@@ -667,6 +830,8 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     topInlinkSourcesToFocus: graph.topInlinkSourcesToFocus,
     focusAnchorQuality: graph.focusAnchorQuality,
     internalLinksSummary: graph.internalLinksSummary,
+    performanceFocus: toPerformanceSnapshot(focusLighthouse),
+    performanceHome: toPerformanceSnapshot(homeLighthouse),
   });
 
   if (inputs.llm_enabled) {

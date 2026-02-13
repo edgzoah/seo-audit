@@ -228,6 +228,14 @@ export interface InternalLinksSummary {
   topAnchors: AnchorCount[];
 }
 
+export interface PerformanceSnapshot {
+  status: "measured" | "not_measured";
+  lcpMs: number | null;
+  inpMs: number | null;
+  cls: number | null;
+  scorePerf: number | null;
+}
+
 export interface Summary {
   score_total: number;
   score_by_category: Record<string, number>;
@@ -237,6 +245,8 @@ export interface Summary {
   notices: number;
   focus?: FocusSummary;
   internal_links?: InternalLinksSummary;
+  performanceFocus?: PerformanceSnapshot;
+  performanceHome?: PerformanceSnapshot;
 }
 
 export interface PageSummary {

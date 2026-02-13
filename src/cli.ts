@@ -83,6 +83,7 @@ async function run(): Promise<void> {
     .option("--focus-keyword <keyword>", "Primary focus keyword")
     .option("--focus-goal <goal>", "Primary focus goal")
     .option("--constraints <items>", "Semicolon-separated constraints (e.g. c1;c2;c3)")
+    .option("--lighthouse", "Enable Lighthouse performance measurement for focus/home")
     .action(async (target: string, options: AuditCliOptions) => {
       const result = await runAuditCommand(target, options);
       console.log(`Run ID: ${result.runId}`);
