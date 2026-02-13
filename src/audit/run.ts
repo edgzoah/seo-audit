@@ -38,6 +38,24 @@ interface ResolvedBriefFocus {
   primaryFocusUrl: string | null;
 }
 
+const GENERIC_ANCHORS = new Set<string>([
+  "kliknij",
+  "więcej",
+  "zobacz",
+  "czytaj",
+  "tutaj",
+  "sprawdź",
+  "dowiedz się",
+  "link",
+  "przejdź",
+  "read more",
+  "learn more",
+  "here",
+  "more",
+]);
+
+const MAX_TOP_ANCHORS = 10;
+
 function normalizeUrl(raw: string | null, baseUrl?: string): string | null {
   if (!raw) {
     return null;
@@ -54,15 +72,196 @@ function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "en"));
 }
 
+function normalizeAnchorValue(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function toPercent(value: number, total: number): number {
+  if (total <= 0) {
+    return 0;
+  }
+  return Math.round((value / total) * 1000) / 10;
+}
+
+function sortAnchorsByCount(histogram: Map<string, number>, maxItems: number): Array<{ anchor: string; count: number }> {
+  return Array.from(histogram.entries())
+    .sort((a, b) => {
+      const countDelta = b[1] - a[1];
+      if (countDelta !== 0) {
+        return countDelta;
+      }
+      return a[0].localeCompare(b[0], "en");
+    })
+    .slice(0, maxItems)
+    .map(([anchor, count]) => ({ anchor, count }));
+}
+
+function isHomePage(url: string): boolean {
+  try {
+    return new URL(url).pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
+interface InternalLinkGraphResult {
+  pages: PageExtract[];
+  focusInlinkUrls: Set<string>;
+  focusInlinksCount: number;
+  topInlinkSourcesToFocus: string[];
+  focusAnchorQuality: {
+    percentGenericAnchors: number;
+    percentEmptyAnchors: number;
+    topAnchors: Array<{ anchor: string; count: number }>;
+  };
+  internalLinksSummary: {
+    orphanPagesCount: number;
+    nearOrphanPagesCount: number;
+    navLikelyInlinksPercent: number;
+    percentGenericAnchors: number;
+    percentEmptyAnchors: number;
+    topAnchors: Array<{ anchor: string; count: number }>;
+  };
+}
+
+function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): InternalLinkGraphResult {
+  const pageByKey = new Map<string, PageExtract>();
+  const aliasToKey = new Map<string, string>();
+  const inlinksByTarget = new Map<string, number>();
+  const navLikelyByTarget = new Map<string, number>();
+  const anchorsByTarget = new Map<string, Map<string, number>>();
+  const inlinkSourceCountsToFocus = new Map<string, number>();
+  const focusAnchorHistogram = new Map<string, number>();
+  const globalAnchorHistogram = new Map<string, number>();
+
+  let totalInternalOutlinks = 0;
+  let totalNavLikelyOutlinks = 0;
+  let totalGenericAnchors = 0;
+  let totalEmptyAnchors = 0;
+  let focusGenericAnchors = 0;
+  let focusEmptyAnchors = 0;
+  let focusTotalAnchors = 0;
+
+  for (const page of pages) {
+    const key = normalizeUrl(page.final_url) ?? page.final_url;
+    pageByKey.set(key, page);
+    aliasToKey.set(normalizeUrl(page.url) ?? page.url, key);
+    aliasToKey.set(key, key);
+  }
+
+  const normalizedFocusUrl = focusUrl ? normalizeUrl(focusUrl) ?? focusUrl : null;
+
+  for (const page of pages) {
+    const sourceKey = normalizeUrl(page.final_url) ?? page.final_url;
+    for (const link of page.outlinksInternal) {
+      const normalizedTarget = normalizeUrl(link.targetUrl) ?? link.targetUrl;
+      const targetKey = aliasToKey.get(normalizedTarget) ?? normalizedTarget;
+
+      totalInternalOutlinks += 1;
+      if (link.isNavLikely) {
+        totalNavLikelyOutlinks += 1;
+      }
+
+      const normalizedAnchor = normalizeAnchorValue(link.anchorText);
+      const isGenericAnchor = normalizedAnchor.length > 0 && GENERIC_ANCHORS.has(normalizedAnchor);
+      const isEmptyAnchor = normalizedAnchor.length === 0;
+
+      if (isGenericAnchor) {
+        totalGenericAnchors += 1;
+      }
+      if (isEmptyAnchor) {
+        totalEmptyAnchors += 1;
+      }
+
+      if (!anchorsByTarget.has(targetKey)) {
+        anchorsByTarget.set(targetKey, new Map<string, number>());
+      }
+      const targetHistogram = anchorsByTarget.get(targetKey);
+      if (targetHistogram) {
+        targetHistogram.set(normalizedAnchor, (targetHistogram.get(normalizedAnchor) ?? 0) + 1);
+      }
+
+      inlinksByTarget.set(targetKey, (inlinksByTarget.get(targetKey) ?? 0) + 1);
+      if (link.isNavLikely) {
+        navLikelyByTarget.set(targetKey, (navLikelyByTarget.get(targetKey) ?? 0) + 1);
+      }
+
+      globalAnchorHistogram.set(normalizedAnchor, (globalAnchorHistogram.get(normalizedAnchor) ?? 0) + 1);
+
+      if (normalizedFocusUrl && targetKey === normalizedFocusUrl) {
+        inlinkSourceCountsToFocus.set(sourceKey, (inlinkSourceCountsToFocus.get(sourceKey) ?? 0) + 1);
+        focusAnchorHistogram.set(normalizedAnchor, (focusAnchorHistogram.get(normalizedAnchor) ?? 0) + 1);
+        focusTotalAnchors += 1;
+        if (isGenericAnchor) {
+          focusGenericAnchors += 1;
+        }
+        if (isEmptyAnchor) {
+          focusEmptyAnchors += 1;
+        }
+      }
+    }
+  }
+
+  const pagesWithGraph = pages.map((page) => {
+    const key = normalizeUrl(page.final_url) ?? page.final_url;
+    const histogram = anchorsByTarget.get(key) ?? new Map<string, number>();
+    return {
+      ...page,
+      inlinksCount: inlinksByTarget.get(key) ?? 0,
+      inlinksAnchorsTop: sortAnchorsByCount(histogram, MAX_TOP_ANCHORS),
+    };
+  });
+
+  const orphanPagesCount = pagesWithGraph.filter((page) => !isHomePage(page.final_url) && page.inlinksCount === 0).length;
+  const nearOrphanPagesCount = pagesWithGraph.filter((page) => !isHomePage(page.final_url) && page.inlinksCount <= 1).length;
+
+  const focusInlinkUrls = new Set<string>(Array.from(inlinkSourceCountsToFocus.keys()));
+  const topInlinkSourcesToFocus = Array.from(inlinkSourceCountsToFocus.entries())
+    .sort((a, b) => {
+      const countDelta = b[1] - a[1];
+      if (countDelta !== 0) {
+        return countDelta;
+      }
+      return a[0].localeCompare(b[0], "en");
+    })
+    .slice(0, 10)
+    .map(([url]) => url);
+
+  return {
+    pages: pagesWithGraph,
+    focusInlinkUrls,
+    focusInlinksCount: normalizedFocusUrl ? inlinksByTarget.get(normalizedFocusUrl) ?? 0 : 0,
+    topInlinkSourcesToFocus,
+    focusAnchorQuality: {
+      percentGenericAnchors: toPercent(focusGenericAnchors, focusTotalAnchors),
+      percentEmptyAnchors: toPercent(focusEmptyAnchors, focusTotalAnchors),
+      topAnchors: sortAnchorsByCount(focusAnchorHistogram, MAX_TOP_ANCHORS),
+    },
+    internalLinksSummary: {
+      orphanPagesCount,
+      nearOrphanPagesCount,
+      navLikelyInlinksPercent: toPercent(totalNavLikelyOutlinks, totalInternalOutlinks),
+      percentGenericAnchors: toPercent(totalGenericAnchors, totalInternalOutlinks),
+      percentEmptyAnchors: toPercent(totalEmptyAnchors, totalInternalOutlinks),
+      topAnchors: sortAnchorsByCount(globalAnchorHistogram, MAX_TOP_ANCHORS),
+    },
+  };
+}
+
 function resolveInlinkUrls(pages: PageExtract[], focusUrl: string | null): Set<string> {
   if (!focusUrl) {
     return new Set<string>();
   }
 
+  const normalizedFocusUrl = normalizeUrl(focusUrl) ?? focusUrl;
   const inlinks = new Set<string>();
   for (const page of pages) {
-    if (page.links.internal_targets.includes(focusUrl)) {
-      inlinks.add(page.url);
+    for (const outlink of page.outlinksInternal) {
+      const normalizedTarget = normalizeUrl(outlink.targetUrl) ?? outlink.targetUrl;
+      if (normalizedTarget === normalizedFocusUrl) {
+        inlinks.add(normalizeUrl(page.final_url) ?? page.final_url);
+        break;
+      }
     }
   }
   return inlinks;
@@ -202,6 +401,13 @@ function buildFocusSummary(input: { issues: Issue[]; focusUrl: string | null; in
     focus_score: focusScore,
     focus_top_issues: focusTopIssues,
     recommended_next_actions: recommendedNextActions,
+    focusInlinksCount: 0,
+    topInlinkSourcesToFocus: [],
+    focusAnchorQuality: {
+      percentGenericAnchors: 0,
+      percentEmptyAnchors: 0,
+      topAnchors: [],
+    },
   };
 }
 
@@ -328,6 +534,21 @@ function buildCanonicalReport(input: {
   issues: Issue[];
   focusUrl: string | null;
   inlinkUrls: Set<string>;
+  focusInlinksCount: number;
+  topInlinkSourcesToFocus: string[];
+  focusAnchorQuality: {
+    percentGenericAnchors: number;
+    percentEmptyAnchors: number;
+    topAnchors: Array<{ anchor: string; count: number }>;
+  };
+  internalLinksSummary: {
+    orphanPagesCount: number;
+    nearOrphanPagesCount: number;
+    navLikelyInlinksPercent: number;
+    percentGenericAnchors: number;
+    percentEmptyAnchors: number;
+    topAnchors: Array<{ anchor: string; count: number }>;
+  };
 }): Report {
   const errors = input.issues.filter((issue) => issue.severity === "error").length;
   const warnings = input.issues.filter((issue) => issue.severity === "warning").length;
@@ -341,6 +562,14 @@ function buildCanonicalReport(input: {
     focusUrl: input.focusUrl,
     inlinkUrls: input.inlinkUrls,
   });
+  const focusSummaryWithGraph = focusSummary
+    ? {
+        ...focusSummary,
+        focusInlinksCount: input.focusInlinksCount,
+        topInlinkSourcesToFocus: input.topInlinkSourcesToFocus,
+        focusAnchorQuality: input.focusAnchorQuality,
+      }
+    : undefined;
 
   return {
     run_id: input.runId,
@@ -354,7 +583,8 @@ function buildCanonicalReport(input: {
       errors,
       warnings,
       notices,
-      focus: focusSummary,
+      focus: focusSummaryWithGraph,
+      internal_links: input.internalLinksSummary,
     },
     issues: input.issues,
     pages: input.pages.map((page) => ({
@@ -396,16 +626,18 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
+  const graph = buildInternalLinkGraph(extractedPages, normalizeUrl(inputs.brief.focus.primary_url, inputs.target));
+  const graphEnrichedPages = graph.pages;
   const baseIssues = await runRules({
-    pages: extractedPages,
+    pages: graphEnrichedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
     timeoutMs: inputs.timeout_ms,
   });
   const focusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
-  const inlinkUrls = resolveInlinkUrls(extractedPages, focusUrl);
+  const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
   const issues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
 
-  await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(extractedPages, null, 2)}\n`, "utf-8");
+  await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(graphEnrichedPages, null, 2)}\n`, "utf-8");
   await writeFile(path.join(runDir, "issues.json"), `${JSON.stringify(issues, null, 2)}\n`, "utf-8");
 
   const finishedAt = new Date().toISOString();
@@ -414,10 +646,14 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     startedAt: startedAtDate.toISOString(),
     finishedAt,
     inputs,
-    pages: extractedPages,
+    pages: graphEnrichedPages,
     issues,
     focusUrl,
     inlinkUrls,
+    focusInlinksCount: graph.focusInlinksCount,
+    topInlinkSourcesToFocus: graph.topInlinkSourcesToFocus,
+    focusAnchorQuality: graph.focusAnchorQuality,
+    internalLinksSummary: graph.internalLinksSummary,
   });
 
   if (inputs.llm_enabled) {
