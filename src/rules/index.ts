@@ -68,12 +68,40 @@ const SECTION_KEYWORDS = {
   faq: ["faq", "pytania", "?"],
 } as const;
 
+const HTTP_STATUS_CONCURRENCY = 12;
+const REDIRECT_CHAIN_CONCURRENCY = 8;
+
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
 }
 
 function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values)).sort(compareStrings);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
 }
 
 function normalizeText(value: string | null): string | null {
@@ -444,15 +472,26 @@ async function fetchStatusWithFallback(url: string, timeoutMs: number): Promise<
   }
 }
 
+function createSharedStatusResolver(timeoutMs: number): (url: string) => Promise<{ status: number | null; error: string | null }> {
+  const cache = new Map<string, Promise<{ status: number | null; error: string | null }>>();
+
+  return async (url: string) => {
+    if (!cache.has(url)) {
+      cache.set(url, fetchStatusWithFallback(url, timeoutMs));
+    }
+    return await (cache.get(url) as Promise<{ status: number | null; error: string | null }>);
+  };
+}
+
 async function collectBrokenLinkEvidence(input: {
   pages: PageExtract[];
-  timeoutMs: number;
   internal: boolean;
   robotsRules: string[];
+  resolveStatus: (url: string) => Promise<{ status: number | null; error: string | null }>;
 }): Promise<LinkFailureEvidence[]> {
   const failures: LinkFailureEvidence[] = [];
   const statusByUrl = buildStatusMap(input.pages);
-  const cache = new Map<string, { status: number | null; error: string | null }>();
+  const remoteChecks: Array<{ sourceUrl: string; targetUrl: string }> = [];
 
   for (const page of input.pages) {
     const targets = input.internal ? page.links.internal_targets : page.links.external_targets;
@@ -479,26 +518,26 @@ async function collectBrokenLinkEvidence(input: {
         continue;
       }
 
-      if (!cache.has(target)) {
-        cache.set(target, await fetchStatusWithFallback(target, input.timeoutMs));
-      }
-      const result = cache.get(target);
-      if (!result) {
-        continue;
-      }
-
-      if (result.status !== null && result.status < 400) {
-        continue;
-      }
-
-      failures.push({
+      remoteChecks.push({
         sourceUrl: page.url,
         targetUrl: target,
-        status: result.status,
-        error: result.error,
       });
     }
   }
+
+  const checkedFailures = await mapWithConcurrency(remoteChecks, HTTP_STATUS_CONCURRENCY, async (check) => {
+    const result = await input.resolveStatus(check.targetUrl);
+    if (result.status !== null && result.status < 400) {
+      return null;
+    }
+    return {
+      sourceUrl: check.sourceUrl,
+      targetUrl: check.targetUrl,
+      status: result.status,
+      error: result.error,
+    } satisfies LinkFailureEvidence;
+  });
+  failures.push(...checkedFailures.filter((item): item is LinkFailureEvidence => Boolean(item)));
 
   return failures.sort((a, b) => {
     const sourceDelta = compareStrings(a.sourceUrl, b.sourceUrl);
@@ -549,6 +588,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   const issues: Issue[] = [];
   const pages = context.pages;
   const statusByUrl = buildStatusMap(pages);
+  const resolveStatus = createSharedStatusResolver(context.timeoutMs);
   const genericAnchors = new Set((context.genericAnchors ?? Array.from(DEFAULT_GENERIC_ANCHORS)).map((item) => normalizeForCompare(item)));
   const inlinkAnchorStatsByTarget = buildInlinkAnchorStats(pages, genericAnchors);
   const normalizedFocusUrl = context.focusUrl ? normalizeUrl(context.focusUrl) ?? context.focusUrl : null;
@@ -1359,34 +1399,42 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     }
   }
 
-  for (const [canonicalUrl, cachedStatus] of canonicalStatuses.entries()) {
-    if (cachedStatus !== null && cachedStatus >= 200 && cachedStatus < 300) {
-      continue;
-    }
-    const fallbackStatus = cachedStatus ?? (await fetchStatusWithFallback(canonicalUrl, context.timeoutMs)).status;
-    if (fallbackStatus === null || fallbackStatus < 200 || fallbackStatus >= 300) {
-      const affected = pages.filter((page) => page.canonicalUrl === canonicalUrl);
-      issues.push(
-        createIssue({
-          id: "canonical_to_non_200",
-          category: "indexation_conflicts",
-          severity: "warning",
-          rank: 7,
-          title: "Canonical points to non-200 URL",
-          description: "Canonical target URL is not returning HTTP 200.",
-          affectedUrls: affected.map((page) => page.url),
-          evidence: [
-            {
-              type: "http",
-              message: `Canonical ${canonicalUrl} status=${fallbackStatus ?? "unreachable"}.`,
-              target_url: canonicalUrl,
-              status: fallbackStatus ?? undefined,
-            },
-          ],
-          recommendation: "Update canonical to a stable, indexable 200 URL.",
-        }),
-      );
-    }
+  const canonicalChecks = await mapWithConcurrency(
+    Array.from(canonicalStatuses.entries()),
+    HTTP_STATUS_CONCURRENCY,
+    async ([canonicalUrl, cachedStatus]) => {
+      if (cachedStatus !== null && cachedStatus >= 200 && cachedStatus < 300) {
+        return null;
+      }
+      const fallbackStatus = cachedStatus ?? (await resolveStatus(canonicalUrl)).status;
+      if (fallbackStatus !== null && fallbackStatus >= 200 && fallbackStatus < 300) {
+        return null;
+      }
+      return { canonicalUrl, fallbackStatus };
+    },
+  );
+  for (const item of canonicalChecks.filter((entry): entry is { canonicalUrl: string; fallbackStatus: number | null } => Boolean(entry))) {
+    const affected = pages.filter((page) => page.canonicalUrl === item.canonicalUrl);
+    issues.push(
+      createIssue({
+        id: "canonical_to_non_200",
+        category: "indexation_conflicts",
+        severity: "warning",
+        rank: 7,
+        title: "Canonical points to non-200 URL",
+        description: "Canonical target URL is not returning HTTP 200.",
+        affectedUrls: affected.map((page) => page.url),
+        evidence: [
+          {
+            type: "http",
+            message: `Canonical ${item.canonicalUrl} status=${item.fallbackStatus ?? "unreachable"}.`,
+            target_url: item.canonicalUrl,
+            status: item.fallbackStatus ?? undefined,
+          },
+        ],
+        recommendation: "Update canonical to a stable, indexable 200 URL.",
+      }),
+    );
   }
 
   const sitemapUrlSet = new Set(context.sitemapUrls.map((url) => normalizeUrl(url) ?? url));
@@ -1435,9 +1483,9 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
 
   const internalBroken = await collectBrokenLinkEvidence({
     pages,
-    timeoutMs: context.timeoutMs,
     internal: true,
     robotsRules: context.robotsDisallow,
+    resolveStatus,
   });
   if (internalBroken.length > 0) {
     issues.push(
@@ -1463,9 +1511,9 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
 
   const externalBroken = await collectBrokenLinkEvidence({
     pages,
-    timeoutMs: context.timeoutMs,
     internal: false,
     robotsRules: context.robotsDisallow,
+    resolveStatus,
   });
   if (externalBroken.length > 0) {
     issues.push(
@@ -1494,13 +1542,15 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       .filter((page) => page.url !== page.final_url || (statusByUrl.get(page.url) ?? 0) >= 300)
       .map((page) => page.url),
   );
-  const redirectChains: Array<{ url: string; chainLength: number }> = [];
-  for (const candidate of redirectCandidates) {
-    const chainLength = await getRedirectChainLength(candidate, context.timeoutMs);
-    if (chainLength > 1) {
-      redirectChains.push({ url: candidate, chainLength });
-    }
-  }
+  const redirectChains = (
+    await mapWithConcurrency(redirectCandidates, REDIRECT_CHAIN_CONCURRENCY, async (candidate) => {
+      const chainLength = await getRedirectChainLength(candidate, context.timeoutMs);
+      if (chainLength > 1) {
+        return { url: candidate, chainLength };
+      }
+      return null;
+    })
+  ).filter((item): item is { url: string; chainLength: number } => Boolean(item));
   if (redirectChains.length > 0) {
     issues.push(
       createIssue({
