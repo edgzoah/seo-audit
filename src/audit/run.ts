@@ -37,6 +37,69 @@ interface ResolvedBriefFocus {
   primaryFocusUrl: string | null;
 }
 
+function normalizeUrl(raw: string | null, baseUrl?: string): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return baseUrl ? new URL(raw, baseUrl).toString() : new URL(raw).toString();
+  } catch {
+    return null;
+  }
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function resolveInlinkUrls(pages: PageExtract[], focusUrl: string | null): Set<string> {
+  if (!focusUrl) {
+    return new Set<string>();
+  }
+
+  const inlinks = new Set<string>();
+  for (const page of pages) {
+    if (page.links.internal_targets.includes(focusUrl)) {
+      inlinks.add(page.url);
+    }
+  }
+  return inlinks;
+}
+
+function applyFocusTags(input: { issues: Issue[]; focusUrl: string | null; inlinkUrls: Set<string> }): Issue[] {
+  return input.issues.map((issue) => {
+    const hasFocus = input.focusUrl ? issue.affected_urls.some((url) => url === input.focusUrl) : false;
+    const hasInlink = issue.affected_urls.some((url) => input.inlinkUrls.has(url));
+
+    const tags: string[] = [];
+    if (hasFocus) {
+      tags.push("focus");
+    }
+    if (hasInlink) {
+      tags.push("inlink");
+    }
+    if (tags.length === 0) {
+      tags.push("global");
+    }
+
+    return {
+      ...issue,
+      tags: uniqueSorted(tags),
+    };
+  });
+}
+
+function getIssueWeight(issue: Issue): number {
+  if (issue.tags.includes("focus")) {
+    return 2.0;
+  }
+  if (issue.tags.includes("inlink")) {
+    return 1.3;
+  }
+  return 1.0;
+}
+
 function buildRunId(now: Date = new Date()): string {
   const iso = now.toISOString().replace(/[:.]/g, "-");
   return `run-${iso}`;
@@ -163,7 +226,11 @@ function buildCanonicalReport(input: {
   const warnings = input.issues.filter((issue) => issue.severity === "warning").length;
   const notices = input.issues.filter((issue) => issue.severity === "notice").length;
 
-  const scoreTotal = Math.max(0, 100 - errors * 10 - warnings * 5 - notices * 2);
+  const deduction = input.issues.reduce((sum, issue) => {
+    const base = issue.severity === "error" ? 10 : issue.severity === "warning" ? 5 : 2;
+    return sum + base * getIssueWeight(issue);
+  }, 0);
+  const scoreTotal = Math.max(0, Math.round((100 - deduction) * 10) / 10);
 
   return {
     run_id: input.runId,
@@ -223,11 +290,14 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
-  const issues = await runRules({
+  const baseIssues = await runRules({
     pages: extractedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
     timeoutMs: inputs.timeout_ms,
   });
+  const focusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
+  const inlinkUrls = resolveInlinkUrls(extractedPages, focusUrl);
+  const issues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
 
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(extractedPages, null, 2)}\n`, "utf-8");
   await writeFile(path.join(runDir, "issues.json"), `${JSON.stringify(issues, null, 2)}\n`, "utf-8");

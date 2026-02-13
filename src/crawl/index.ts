@@ -390,6 +390,7 @@ function shouldAllowUrlForCrawl(url: string, inputs: AuditInputs, allowedHosts: 
 }
 
 export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<CrawlResult> {
+  const focusUrl = inputs.brief.focus.primary_url ? normalizeUrl(inputs.brief.focus.primary_url, inputs.target) : null;
   const normalizedSeeds = Array.from(
     new Set(
       seeds
@@ -400,13 +401,22 @@ export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<C
 
   const queue: Array<{ url: string; depth: number }> = normalizedSeeds.map((url) => ({ url, depth: 0 }));
   const queued = new Set(normalizedSeeds);
+  if (focusUrl && !queued.has(focusUrl)) {
+    queue.unshift({ url: focusUrl, depth: 0 });
+    queued.add(focusUrl);
+  }
+
   const visited = new Set<string>();
   const pages: CrawledPage[] = [];
   const events: CrawlEvent[] = [];
   const allowedHosts = resolveAllowedHosts(inputs);
   const surfacePatterns = new Set<string>();
+  const forcedNeighborhoodUrls = new Set<string>();
+  const focusNeighborhoodCap = focusUrl ? 25 : 0;
+  let focusNeighborhoodCount = 0;
+  const crawlLimit = inputs.max_pages + focusNeighborhoodCap;
 
-  while (queue.length > 0 && pages.length < inputs.max_pages) {
+  while (queue.length > 0 && pages.length < crawlLimit) {
     const current = queue.shift();
     if (!current) {
       continue;
@@ -421,7 +431,8 @@ export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<C
       continue;
     }
 
-    if (inputs.coverage === "surface") {
+    const isForcedNeighborhood = forcedNeighborhoodUrls.has(current.url) || (focusUrl !== null && current.url === focusUrl);
+    if (inputs.coverage === "surface" && !isForcedNeighborhood) {
       const pattern = patternize(current.url);
       if (surfacePatterns.has(pattern)) {
         continue;
@@ -465,12 +476,36 @@ export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<C
         timing_ms: timingMs,
       });
 
+      const internalLinks = extractInternalLinks(html, finalUrl);
+      const normalizedFinalUrl = normalizeUrl(finalUrl);
+      const isFocusPage =
+        focusUrl !== null && (current.url === focusUrl || (normalizedFinalUrl !== null && normalizedFinalUrl === focusUrl));
+
+      if (isFocusPage && focusNeighborhoodCount < focusNeighborhoodCap) {
+        for (const link of internalLinks) {
+          if (focusNeighborhoodCount >= focusNeighborhoodCap) {
+            break;
+          }
+
+          if (queued.has(link) || visited.has(link)) {
+            continue;
+          }
+          if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
+            continue;
+          }
+
+          queue.push({ url: link, depth: current.depth + 1 });
+          queued.add(link);
+          forcedNeighborhoodUrls.add(link);
+          focusNeighborhoodCount += 1;
+        }
+      }
+
       const canDiscoverLinks = (inputs.coverage === "surface" || inputs.coverage === "full") && current.depth < inputs.crawl_depth;
       if (!canDiscoverLinks) {
         continue;
       }
 
-      const internalLinks = extractInternalLinks(html, finalUrl);
       for (const link of internalLinks) {
         if (queued.has(link) || visited.has(link)) {
           continue;
