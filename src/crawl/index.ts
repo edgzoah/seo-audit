@@ -42,6 +42,13 @@ export interface CrawlResult {
   events: CrawlEvent[];
 }
 
+export interface CrawlProgress {
+  pagesFetched: number;
+  eventsCount: number;
+  queueLength: number;
+  crawlLimit: number;
+}
+
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
 }
@@ -416,7 +423,11 @@ function shouldAllowUrlForCrawl(url: string, inputs: AuditInputs, allowedHosts: 
   return true;
 }
 
-export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<CrawlResult> {
+export async function crawlSite(
+  inputs: AuditInputs,
+  seeds: string[],
+  onProgress?: (progress: CrawlProgress) => void,
+): Promise<CrawlResult> {
   const focusUrl = inputs.brief.focus.primary_url ? normalizeUrl(inputs.brief.focus.primary_url, inputs.target) : null;
   const normalizedSeeds = Array.from(
     new Set(
@@ -545,6 +556,12 @@ export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<C
         queue.push({ url: link, depth: current.depth + 1 });
         queued.add(link);
       }
+      onProgress?.({
+        pagesFetched: pages.length,
+        eventsCount: events.length,
+        queueLength: queue.length,
+        crawlLimit,
+      });
     } catch (error) {
       const timingMs = Date.now() - startedAt;
       const message = error instanceof Error ? error.message : String(error);
@@ -557,6 +574,12 @@ export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<C
         content_type: null,
         timing_ms: timingMs,
         error: message,
+      });
+      onProgress?.({
+        pagesFetched: pages.length,
+        eventsCount: events.length,
+        queueLength: queue.length,
+        crawlLimit,
       });
     }
   }

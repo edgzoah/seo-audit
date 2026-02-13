@@ -48,6 +48,7 @@ export interface AuditCliOptions {
   serviceMinWords?: number;
   genericAnchors?: string;
   includeSerp?: boolean;
+  onProgress?: (progress: AuditProgressEvent) => void;
 }
 
 interface ResolvedBriefFocus {
@@ -58,6 +59,12 @@ interface ResolvedBriefFocus {
 interface LighthouseRunResult {
   measured: boolean;
   metrics?: LighthouseMetrics;
+}
+
+export interface AuditProgressEvent {
+  percent: number;
+  stage: string;
+  detail: string;
 }
 
 const GENERIC_ANCHORS = new Set<string>([
@@ -77,6 +84,14 @@ const GENERIC_ANCHORS = new Set<string>([
 ]);
 
 const MAX_TOP_ANCHORS = 10;
+
+function emitProgress(options: AuditCliOptions, percent: number, stage: string, detail: string): void {
+  options.onProgress?.({
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+    stage,
+    detail,
+  });
+}
 
 function normalizeUrl(raw: string | null, baseUrl?: string): string | null {
   if (!raw) {
@@ -803,6 +818,7 @@ function buildCanonicalReport(input: {
 }
 
 export async function runAuditCommand(target: string, options: AuditCliOptions = {}): Promise<AuditRunResult> {
+  emitProgress(options, 2, "init", "Loading config");
   const startedAtDate = new Date();
   const normalizedUrl = new URL(target).toString();
   const config = await loadConfig();
@@ -812,14 +828,21 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const runId = buildRunId(startedAtDate);
   const runDir = path.join(process.cwd(), "runs", runId);
   await mkdir(runDir, { recursive: true });
+  emitProgress(options, 6, "init", "Preparing run directory");
 
   await writeFile(path.join(runDir, "brief.md"), `${inputs.brief.text}\n`, "utf-8");
   await writeFile(path.join(runDir, "inputs.json"), `${JSON.stringify(inputs, null, 2)}\n`, "utf-8");
 
+  emitProgress(options, 10, "seed", "Discovering seeds");
   const seedDiscovery = await discoverSeeds(inputs);
   await writeFile(path.join(runDir, "seed-discovery.json"), `${JSON.stringify(seedDiscovery, null, 2)}\n`, "utf-8");
 
-  const crawl = await crawlSite(inputs, seedDiscovery.seeds);
+  emitProgress(options, 14, "crawl", "Crawling pages");
+  const crawl = await crawlSite(inputs, seedDiscovery.seeds, (progress) => {
+    const crawlProgress = progress.crawlLimit > 0 ? Math.min(1, progress.pagesFetched / progress.crawlLimit) : 0;
+    const mappedPercent = 14 + crawlProgress * 28;
+    emitProgress(options, mappedPercent, "crawl", `${progress.pagesFetched}/${progress.crawlLimit} pages`);
+  });
   const crawlJsonl = crawl.events.map((event) => JSON.stringify(event)).join("\n");
   await writeFile(path.join(runDir, "crawl.jsonl"), crawlJsonl.length > 0 ? `${crawlJsonl}\n` : "", "utf-8");
 
@@ -827,6 +850,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     throw new Error("Crawl did not return any fetchable pages.");
   }
 
+  emitProgress(options, 45, "extract", "Extracting page data");
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
@@ -838,6 +862,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   let focusLighthouse: LighthouseRunResult = { measured: false };
   let homeLighthouse: LighthouseRunResult = { measured: false };
   if (shouldMeasureLighthouse) {
+    emitProgress(options, 54, "lighthouse", "Running Lighthouse checks");
     [focusLighthouse, homeLighthouse] = await Promise.all([
       normalizedFocusUrl ? runLighthouse(normalizedFocusUrl, inputs.timeout_ms * 2) : Promise.resolve({ measured: false }),
       runLighthouse(homeUrl, inputs.timeout_ms * 2),
@@ -862,6 +887,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     .filter((entry) => entry.source !== "start_url")
     .map((entry) => entry.url);
   const genericAnchors = await loadGenericAnchors(options.genericAnchors);
+  emitProgress(options, 62, "rules", "Running deterministic rules");
   const baseIssues = await runRules({
     pages: graphEnrichedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
@@ -878,6 +904,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
   const issues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
 
+  emitProgress(options, 78, "report", "Writing artifacts");
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(graphEnrichedPages, null, 2)}\n`, "utf-8");
   await writeFile(path.join(runDir, "issues.json"), `${JSON.stringify(issues, null, 2)}\n`, "utf-8");
 
@@ -901,6 +928,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   });
 
   if (inputs.llm_enabled) {
+    emitProgress(options, 86, "llm", "Generating LLM proposals");
     const llmOutput = await generateOptionalLlmProposals({
       runDir,
       report,
@@ -912,12 +940,16 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     }
   }
 
+  emitProgress(options, 94, "report", "Rendering report files");
   await writeRunReports(runDir, report);
 
   if (inputs.baseline_run_id) {
+    emitProgress(options, 97, "diff", "Generating diff artifacts");
     const baselineReport = await loadReportFromRun(inputs.baseline_run_id);
     await writeRunDiffArtifacts(runDir, baselineReport, report);
   }
+
+  emitProgress(options, 100, "done", "Completed");
 
   return {
     runId,

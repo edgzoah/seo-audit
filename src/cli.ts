@@ -2,7 +2,7 @@
 
 import { Command, InvalidArgumentError } from "commander";
 
-import { runAuditCommand, type AuditCliOptions } from "./audit/run.js";
+import { runAuditCommand, type AuditCliOptions, type AuditProgressEvent } from "./audit/run.js";
 import { initWorkspace } from "./config/index.js";
 import { loadDiffFromRuns, loadReportFromRun, renderDiff, renderReport, type CoverageMode, type ReportFormat } from "./report/index.js";
 
@@ -34,6 +34,36 @@ function parsePositiveInteger(value: string): number {
 function printCliError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Error: ${message}`);
+}
+
+function buildProgressRenderer(): { update: (event: AuditProgressEvent) => void; finish: () => void } {
+  let lastLineLength = 0;
+  const width = 26;
+  const isTty = Boolean(process.stdout.isTTY);
+
+  const update = (event: AuditProgressEvent): void => {
+    if (!isTty) {
+      return;
+    }
+    const percent = Math.max(0, Math.min(100, event.percent));
+    const filled = Math.round((percent / 100) * width);
+    const bar = `${"=".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}`;
+    const line = `[${bar}] ${String(percent).padStart(3, " ")}% ${event.stage} ${event.detail}`;
+    const padded = line.padEnd(Math.max(lastLineLength, line.length), " ");
+    process.stdout.write(`\r${padded}`);
+    lastLineLength = padded.length;
+  };
+
+  const finish = (): void => {
+    if (!isTty) {
+      return;
+    }
+    if (lastLineLength > 0) {
+      process.stdout.write("\n");
+    }
+  };
+
+  return { update, finish };
 }
 
 async function run(): Promise<void> {
@@ -89,16 +119,25 @@ async function run(): Promise<void> {
     .option("--generic-anchors <path>", "Path to custom generic anchor list (newline/comma separated)")
     .option("--no-include-serp", "Disable SERP/intent-related deterministic rules")
     .action(async (target: string, options: AuditCliOptions) => {
-      const result = await runAuditCommand(target, options);
-      console.log(`Run ID: ${result.runId}`);
-      console.log(`Run directory: ${result.runDir}`);
-      console.log(`Pages extract: ${result.runDir}/pages.json`);
-      console.log(`Issues: ${result.runDir}/issues.json (${result.issues.length})`);
-      console.log(`Canonical report: ${result.runDir}/report.json`);
-      console.log(`Markdown report: ${result.runDir}/report.md`);
-      console.log(`LLM report: ${result.runDir}/report.llm.txt`);
-      console.log(`HTML report: ${result.runDir}/report.html`);
-      console.log(`Inputs: ${result.runDir}/inputs.json`);
+      const progress = buildProgressRenderer();
+      try {
+        const result = await runAuditCommand(target, {
+          ...options,
+          onProgress: progress.update,
+        });
+        progress.finish();
+        console.log(`Run ID: ${result.runId}`);
+        console.log(`Run directory: ${result.runDir}`);
+        console.log(`Pages extract: ${result.runDir}/pages.json`);
+        console.log(`Issues: ${result.runDir}/issues.json (${result.issues.length})`);
+        console.log(`Canonical report: ${result.runDir}/report.json`);
+        console.log(`Markdown report: ${result.runDir}/report.md`);
+        console.log(`LLM report: ${result.runDir}/report.llm.txt`);
+        console.log(`HTML report: ${result.runDir}/report.html`);
+        console.log(`Inputs: ${result.runDir}/inputs.json`);
+      } finally {
+        progress.finish();
+      }
     });
 
   program
