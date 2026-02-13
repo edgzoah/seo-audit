@@ -58,6 +58,8 @@ function parseRobots(content: string): { sitemapUrls: string[]; disallowRules: s
   const sitemapUrls = new Set<string>();
   const disallowRules = new Set<string>();
   const lines = content.split(/\r?\n/);
+  let currentAgents: string[] = [];
+  let inAnyUserAgentGroup = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -74,10 +76,26 @@ function parseRobots(content: string): { sitemapUrls: string[]; disallowRules: s
       continue;
     }
 
+    const userAgentMatch = trimmed.match(/^user-agent\s*:\s*(.+)$/i);
+    if (userAgentMatch?.[1]) {
+      const agent = userAgentMatch[1].trim().toLowerCase();
+      if (inAnyUserAgentGroup) {
+        currentAgents.push(agent);
+      } else {
+        currentAgents = [agent];
+      }
+      inAnyUserAgentGroup = true;
+      continue;
+    }
+
+    // new non-user-agent directive ends the "consecutive user-agent" header block
+    inAnyUserAgentGroup = false;
+
     const disallowMatch = trimmed.match(/^disallow\s*:\s*(.+)$/i);
     if (disallowMatch?.[1]) {
       const rule = disallowMatch[1].trim();
-      if (rule.length > 0 && !rule.includes("*")) {
+      const appliesToWildcard = currentAgents.includes("*");
+      if (appliesToWildcard && rule.length > 0 && !rule.includes("*")) {
         disallowRules.add(rule);
       }
     }

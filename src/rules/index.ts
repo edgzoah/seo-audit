@@ -132,6 +132,15 @@ function isBlockedByRobots(pageUrl: string, rules: string[]): boolean {
   }
 }
 
+function isHttpOrHttpsUrl(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol.toLowerCase();
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function createSinglePageIssue(page: PageExtract, input: Omit<IssueInput, "affectedUrls">): Issue {
   return createIssue({
     ...input,
@@ -220,6 +229,7 @@ async function collectBrokenLinkEvidence(input: {
   pages: PageExtract[];
   timeoutMs: number;
   internal: boolean;
+  robotsRules: string[];
 }): Promise<LinkFailureEvidence[]> {
   const failures: LinkFailureEvidence[] = [];
   const statusByUrl = buildStatusMap(input.pages);
@@ -228,6 +238,14 @@ async function collectBrokenLinkEvidence(input: {
   for (const page of input.pages) {
     const targets = input.internal ? page.links.internal_targets : page.links.external_targets;
     for (const target of targets) {
+      if (!isHttpOrHttpsUrl(target)) {
+        continue;
+      }
+
+      if (isBlockedByRobots(target, input.robotsRules)) {
+        continue;
+      }
+
       if (input.internal && statusByUrl.has(target)) {
         const status = statusByUrl.get(target) ?? null;
         if (status !== null && status < 400) {
@@ -646,6 +664,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     pages,
     timeoutMs: context.timeoutMs,
     internal: true,
+    robotsRules: context.robotsDisallow,
   });
   if (internalBroken.length > 0) {
     issues.push(
@@ -673,6 +692,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     pages,
     timeoutMs: context.timeoutMs,
     internal: false,
+    robotsRules: context.robotsDisallow,
   });
   if (externalBroken.length > 0) {
     issues.push(
