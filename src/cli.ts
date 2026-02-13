@@ -84,6 +84,10 @@ async function run(): Promise<void> {
     .option("--focus-goal <goal>", "Primary focus goal")
     .option("--constraints <items>", "Semicolon-separated constraints (e.g. c1;c2;c3)")
     .option("--lighthouse", "Enable Lighthouse performance measurement for focus/home")
+    .option("--focus-inlinks-threshold <n>", "Minimum focus inlinks threshold", parsePositiveInteger)
+    .option("--service-min-words <n>", "Minimum words for service pages", parsePositiveInteger)
+    .option("--generic-anchors <path>", "Path to custom generic anchor list (newline/comma separated)")
+    .option("--no-include-serp", "Disable SERP/intent-related deterministic rules")
     .action(async (target: string, options: AuditCliOptions) => {
       const result = await runAuditCommand(target, options);
       console.log(`Run ID: ${result.runId}`);

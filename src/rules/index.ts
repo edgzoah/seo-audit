@@ -12,6 +12,11 @@ interface RuleContext {
   timeoutMs: number;
   focusUrl: string | null;
   sitemapUrls: string[];
+  focusInlinksThreshold: number;
+  serviceMinWords: number;
+  defaultMinWords: number;
+  genericAnchors: string[] | null;
+  includeSerp: boolean;
 }
 
 interface IssueInput {
@@ -40,7 +45,7 @@ interface AnchorStats {
   navLikely: number;
 }
 
-const GENERIC_ANCHORS = new Set<string>([
+const DEFAULT_GENERIC_ANCHORS = new Set<string>([
   "kliknij",
   "więcej",
   "zobacz",
@@ -334,7 +339,7 @@ function createSinglePageIssue(page: PageExtract, input: Omit<IssueInput, "affec
   });
 }
 
-function buildInlinkAnchorStats(pages: PageExtract[]): Map<string, AnchorStats> {
+function buildInlinkAnchorStats(pages: PageExtract[], genericAnchors: Set<string>): Map<string, AnchorStats> {
   const statsByTarget = new Map<string, AnchorStats>();
 
   for (const page of pages) {
@@ -346,7 +351,7 @@ function buildInlinkAnchorStats(pages: PageExtract[]): Map<string, AnchorStats> 
       if (anchor.length === 0) {
         stats.empty += 1;
       }
-      if (anchor.length > 0 && GENERIC_ANCHORS.has(anchor)) {
+      if (anchor.length > 0 && genericAnchors.has(anchor)) {
         stats.generic += 1;
       }
       if (link.isNavLikely) {
@@ -544,7 +549,8 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   const issues: Issue[] = [];
   const pages = context.pages;
   const statusByUrl = buildStatusMap(pages);
-  const inlinkAnchorStatsByTarget = buildInlinkAnchorStats(pages);
+  const genericAnchors = new Set((context.genericAnchors ?? Array.from(DEFAULT_GENERIC_ANCHORS)).map((item) => normalizeForCompare(item)));
+  const inlinkAnchorStatsByTarget = buildInlinkAnchorStats(pages, genericAnchors);
   const normalizedFocusUrl = context.focusUrl ? normalizeUrl(context.focusUrl) ?? context.focusUrl : null;
 
   for (const page of pages) {
@@ -568,7 +574,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     };
 
     if (isOnPageAuditable) {
-      if (h1Text.length > 0 && page.titleText.length > 0 && titleH1Similarity < 0.25) {
+      if (context.includeSerp && h1Text.length > 0 && page.titleText.length > 0 && titleH1Similarity < 0.25) {
         issues.push(
           createSinglePageIssue(page, {
             id: "title_h1_mismatch",
@@ -590,7 +596,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         );
       }
 
-      if (h1Count > 1 || headingDupSimilarity >= 0.85) {
+      if (context.includeSerp && (h1Count > 1 || headingDupSimilarity >= 0.85)) {
         issues.push(
           createSinglePageIssue(page, {
             id: "title_overwrite_risk",
@@ -640,7 +646,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         );
       }
 
-      if (!page.meta_description || descriptionLength === 0) {
+      if (context.includeSerp && (!page.meta_description || descriptionLength === 0)) {
         issues.push(
           createSinglePageIssue(page, {
             id: "meta_description_missing",
@@ -653,7 +659,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
             recommendation: "Add a concise meta description aligned with search intent.",
           }),
         );
-      } else if (descriptionLength < 70 || descriptionLength > 165) {
+      } else if (context.includeSerp && (descriptionLength < 70 || descriptionLength > 165)) {
         issues.push(
           createSinglePageIssue(page, {
             id: "description_length_out_of_range",
@@ -668,7 +674,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         );
       }
 
-      if (page.metaDescriptionText.length > 0) {
+      if (context.includeSerp && page.metaDescriptionText.length > 0) {
         const repeatStats = countTopKeywordRepeat(page.metaDescriptionText);
         if (repeatStats.count >= 4 || repeatStats.ratio >= 0.22) {
           issues.push(
@@ -780,7 +786,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         );
       }
 
-      if (isServiceLocalPage(page.final_url)) {
+      if (context.includeSerp && isServiceLocalPage(page.final_url)) {
         const intentHaystack = normalizeForCompare(`${page.headingTextConcat} ${page.mainText}`);
         if (!hasAnyKeyword(intentHaystack, SECTION_KEYWORDS.forWho)) {
           issues.push(
@@ -840,7 +846,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         }
       }
 
-      const thinThreshold = isServiceLocalPage(page.final_url) ? 300 : 150;
+      const thinThreshold = isServiceLocalPage(page.final_url) ? context.serviceMinWords : context.defaultMinWords;
       if (page.wordCountMain < thinThreshold) {
         issues.push(
           createSinglePageIssue(page, {
@@ -1297,7 +1303,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
 
   if (normalizedFocusUrl) {
     const focusPage = pages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === normalizedFocusUrl);
-    if (focusPage && focusPage.inlinksCount < 5) {
+    if (focusPage && focusPage.inlinksCount < context.focusInlinksThreshold) {
       issues.push(
         createSinglePageIssue(focusPage, {
           id: "focus_inlinks_count_low",
@@ -1306,7 +1312,13 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
           rank: 7,
           title: "Focus page has low inlink count",
           description: "Focus URL has fewer internal inlinks than recommended baseline.",
-          evidence: [{ type: "link", message: `inlinksCount=${focusPage.inlinksCount}, threshold=5.`, url: focusPage.url }],
+          evidence: [
+            {
+              type: "link",
+              message: `inlinksCount=${focusPage.inlinksCount}, threshold=${context.focusInlinksThreshold}.`,
+              url: focusPage.url,
+            },
+          ],
           recommendation: "Add contextual internal links to focus URL from relevant high-value pages.",
         }),
       );
@@ -1404,20 +1416,22 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     );
   }
 
-  issues.push(
-    ...collectDuplicateFieldIssues({
-      pages,
-      fieldName: "description",
-      valueByPage: (page) => page.meta_description,
-      issueId: "meta_description_duplicate",
-      category: "serp",
-      severity: "notice",
-      rank: 4,
-      title: "Duplicate meta descriptions",
-      description: "Multiple pages share identical meta description text.",
-      recommendation: "Use unique descriptions per page.",
-    }),
-  );
+  if (context.includeSerp) {
+    issues.push(
+      ...collectDuplicateFieldIssues({
+        pages,
+        fieldName: "description",
+        valueByPage: (page) => page.meta_description,
+        issueId: "meta_description_duplicate",
+        category: "serp",
+        severity: "notice",
+        rank: 4,
+        title: "Duplicate meta descriptions",
+        description: "Multiple pages share identical meta description text.",
+        recommendation: "Use unique descriptions per page.",
+      }),
+    );
+  }
 
   const internalBroken = await collectBrokenLinkEvidence({
     pages,

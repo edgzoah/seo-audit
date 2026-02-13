@@ -44,6 +44,10 @@ export interface AuditCliOptions {
   focusGoal?: string;
   constraints?: string;
   lighthouse?: boolean;
+  focusInlinksThreshold?: number;
+  serviceMinWords?: number;
+  genericAnchors?: string;
+  includeSerp?: boolean;
 }
 
 interface ResolvedBriefFocus {
@@ -522,6 +526,7 @@ function buildFocusSummary(input: {
   inlinkUrls: Set<string>;
   pages: PageExtract[];
   focusInlinksCount: number;
+  focusInlinksThreshold: number;
   performanceFocus: PerformanceSnapshot;
 }): Report["summary"]["focus"] {
   if (!input.focusUrl) {
@@ -555,7 +560,7 @@ function buildFocusSummary(input: {
   );
   const hasTitleH1Mismatch = focusDirectIssues.some((issue) => issue.id === "title_h1_mismatch");
   const hasThinContent = focusDirectIssues.some((issue) => issue.id === "thin_content");
-  const inlinksOk = input.focusInlinksCount >= 5;
+  const inlinksOk = input.focusInlinksCount >= input.focusInlinksThreshold;
   const lighthouseMeasured = input.performanceFocus.status === "measured";
   const lighthouseGood =
     lighthouseMeasured &&
@@ -595,6 +600,19 @@ function parseConstraints(rawConstraints: string | undefined): string[] {
     .split(";")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+async function loadGenericAnchors(pathValue: string | undefined): Promise<string[] | null> {
+  if (!pathValue) {
+    return null;
+  }
+  const absolutePath = path.resolve(pathValue);
+  const content = await readFile(absolutePath, "utf-8");
+  const values = content
+    .split(/\r?\n|,/)
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
+  return values.length > 0 ? values : null;
 }
 
 async function readBriefText(briefPath: string | undefined): Promise<string> {
@@ -719,6 +737,7 @@ function buildCanonicalReport(input: {
     percentEmptyAnchors: number;
     topAnchors: Array<{ anchor: string; count: number }>;
   };
+  focusInlinksThreshold: number;
   performanceFocus: PerformanceSnapshot;
   performanceHome: PerformanceSnapshot;
 }): Report {
@@ -742,6 +761,7 @@ function buildCanonicalReport(input: {
     inlinkUrls: input.inlinkUrls,
     pages: input.pages,
     focusInlinksCount: input.focusInlinksCount,
+    focusInlinksThreshold: input.focusInlinksThreshold,
     performanceFocus: input.performanceFocus,
   });
   const focusSummaryWithGraph = focusSummary
@@ -841,12 +861,18 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const sitemapSeedUrls = seedDiscovery.discovered
     .filter((entry) => entry.source !== "start_url")
     .map((entry) => entry.url);
+  const genericAnchors = await loadGenericAnchors(options.genericAnchors);
   const baseIssues = await runRules({
     pages: graphEnrichedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
     timeoutMs: inputs.timeout_ms,
     focusUrl: normalizedFocusUrl,
     sitemapUrls: sitemapSeedUrls,
+    focusInlinksThreshold: options.focusInlinksThreshold ?? 5,
+    serviceMinWords: options.serviceMinWords ?? 300,
+    defaultMinWords: 150,
+    genericAnchors,
+    includeSerp: options.includeSerp ?? true,
   });
   const focusUrl = normalizedFocusUrl;
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
@@ -869,6 +895,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     topInlinkSourcesToFocus: graph.topInlinkSourcesToFocus,
     focusAnchorQuality: graph.focusAnchorQuality,
     internalLinksSummary: graph.internalLinksSummary,
+    focusInlinksThreshold: options.focusInlinksThreshold ?? 5,
     performanceFocus: toPerformanceSnapshot(focusLighthouse),
     performanceHome: toPerformanceSnapshot(homeLighthouse),
   });
