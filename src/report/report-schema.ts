@@ -89,6 +89,40 @@ export interface PageSecurity {
   security_headers_missing: string[];
 }
 
+export interface PageOutlinkInternal {
+  targetUrl: string;
+  anchorText: string;
+  rel: string;
+  isNavLikely: boolean;
+}
+
+export interface PageOutlinkExternal {
+  targetUrl: string;
+  anchorText: string;
+  rel: string;
+}
+
+export interface AnchorCount {
+  anchor: string;
+  count: number;
+}
+
+export interface SchemaError {
+  message: string;
+  pointer: string;
+}
+
+export interface LighthouseMetrics {
+  lcpMs?: number;
+  inpMs?: number;
+  cls?: number;
+  tbtMs?: number;
+  scorePerf?: number;
+  scoreA11y?: number;
+  scoreSeo?: number;
+  scoreBestPractices?: number;
+}
+
 export interface PageExtract {
   url: string;
   final_url: string;
@@ -103,6 +137,38 @@ export interface PageExtract {
   images: PageImages;
   schema: PageSchema;
   security: PageSecurity;
+  mainText: string;
+  wordCountMain: number;
+  firstViewportText: string;
+  headingTextConcat: string;
+  brandSignals: string[];
+  outlinksInternal: PageOutlinkInternal[];
+  outlinksExternal: PageOutlinkExternal[];
+  inlinksCount: number;
+  inlinksAnchorsTop: AnchorCount[];
+  titleText: string;
+  titleLength: number;
+  metaDescriptionText: string;
+  metaDescriptionLength: number;
+  ogTitle: string | null;
+  ogDescription: string | null;
+  ogImage: string | null;
+  metaRobotsContent: string;
+  xRobotsTagHeader: string | null;
+  canonicalUrl: string | null;
+  jsonLdRawBlocks: string[];
+  jsonLdParsed: Record<string, unknown>[];
+  schemaTypesDetected: string[];
+  schemaErrors: SchemaError[];
+  htmlLang: string | null;
+  linksWithoutAccessibleNameCount: number;
+  lighthouse?: LighthouseMetrics;
+}
+
+export interface FocusAnchorQuality {
+  percentGenericAnchors: number;
+  percentEmptyAnchors: number;
+  topAnchors: AnchorCount[];
 }
 
 export interface Evidence {
@@ -148,6 +214,18 @@ export interface FocusSummary {
   focus_score: number;
   focus_top_issues: string[];
   recommended_next_actions: Action[];
+  focusInlinksCount?: number;
+  topInlinkSourcesToFocus?: string[];
+  focusAnchorQuality?: FocusAnchorQuality;
+}
+
+export interface InternalLinksSummary {
+  orphanPagesCount: number;
+  nearOrphanPagesCount: number;
+  navLikelyInlinksPercent: number;
+  percentGenericAnchors: number;
+  percentEmptyAnchors: number;
+  topAnchors: AnchorCount[];
 }
 
 export interface Summary {
@@ -158,6 +236,7 @@ export interface Summary {
   warnings: number;
   notices: number;
   focus?: FocusSummary;
+  internal_links?: InternalLinksSummary;
 }
 
 export interface PageSummary {
@@ -178,6 +257,7 @@ export interface Report {
   proposed_fixes?: ProposedFix[];
   prioritized_actions?: Action[];
   pages: PageSummary[];
+  page_extracts?: PageExtract[];
 }
 
 export interface ValidationResult {

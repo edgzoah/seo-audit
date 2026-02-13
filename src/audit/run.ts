@@ -364,6 +364,7 @@ function buildCanonicalReport(input: {
       title: page.title,
       canonical: page.canonical,
     })),
+    page_extracts: input.pages,
   };
 }
 
