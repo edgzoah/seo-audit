@@ -1,4 +1,4 @@
-import type { Issue, Report } from "./report-schema.js";
+import type { Issue, PageExtract, Report } from "./report-schema.js";
 
 function escapeHtml(value: string): string {
   return value
@@ -53,6 +53,14 @@ function renderIssue(issue: Issue): string {
   `.trim();
 }
 
+function findFocusPage(report: Report): PageExtract | null {
+  const focusUrl = report.summary.focus?.primary_url;
+  if (!focusUrl || !report.page_extracts) {
+    return null;
+  }
+  return report.page_extracts.find((page) => page.final_url === focusUrl || page.url === focusUrl) ?? null;
+}
+
 export function renderReportHtml(report: Report): string {
   const scoreCards = Object.entries(report.summary.score_by_category)
     .map(([category, score]) => `<div class="score-pill"><span>${escapeHtml(category)}</span><strong>${score}</strong></div>`)
@@ -79,6 +87,17 @@ export function renderReportHtml(report: Report): string {
       </li>`,
     )
     .join("");
+  const focusPage = findFocusPage(report);
+  const focusSummary = report.summary.focus;
+  const focusH1 = focusPage?.headings_outline.find((item) => item.level === 1)?.text ?? "(missing)";
+  const focusHeadingsTop = focusPage?.headings_outline.slice(0, 5).map((item) => item.text).join(" | ") ?? "(none)";
+  const titleMismatch = report.issues.some((issue) => issue.id === "title_h1_mismatch" && issue.affected_urls.includes(focusPage?.url ?? ""));
+  const serpCounts = {
+    mismatch: report.issues.filter((issue) => issue.id === "title_h1_mismatch").length,
+    missing: report.issues.filter((issue) => issue.id === "meta_description_missing").length,
+    duplicate: report.issues.filter((issue) => issue.id === "meta_description_duplicate").length,
+    spammy: report.issues.filter((issue) => issue.id === "meta_description_spammy").length,
+  };
 
   return `
 <!doctype html>
@@ -160,8 +179,22 @@ export function renderReportHtml(report: Report): string {
         report.summary.focus
           ? `
       <section class="panel">
-        <h2>Focus Section</h2>
+        <h2>Focus Deep Dive</h2>
         <p><strong>Primary URL:</strong> ${escapeHtml(report.summary.focus.primary_url)}</p>
+        <p><strong>Title:</strong> ${escapeHtml(focusPage?.titleText || "(missing)")}</p>
+        <p><strong>H1:</strong> ${escapeHtml(focusH1)}</p>
+        <p><strong>Title/H1 mismatch:</strong> ${titleMismatch ? "yes" : "no"}</p>
+        <p><strong>Headings (top 5):</strong> ${escapeHtml(focusHeadingsTop)}</p>
+        <p><strong>wordCountMain:</strong> ${focusPage?.wordCountMain ?? 0}</p>
+        <p><strong>Focus inlinks:</strong> ${focusSummary?.focusInlinksCount ?? 0}</p>
+        <p><strong>Top inlink sources:</strong> ${(focusSummary?.topInlinkSourcesToFocus ?? [])
+          .slice(0, 10)
+          .map((item) => escapeHtml(item))
+          .join(", ") || "none"}</p>
+        <p><strong>Top anchors:</strong> ${(focusSummary?.focusAnchorQuality?.topAnchors ?? [])
+          .slice(0, 10)
+          .map((item) => `${escapeHtml(item.anchor || "(empty)")} (${item.count})`)
+          .join(", ") || "none"}</p>
         <p><strong>Top Focus Issues:</strong> ${
           report.summary.focus.focus_top_issues.length > 0
             ? report.summary.focus.focus_top_issues.map((item) => escapeHtml(item)).join(", ")
@@ -170,6 +203,53 @@ export function renderReportHtml(report: Report): string {
       </section>`
           : ""
       }
+
+      <section class="panel">
+        <h2>Internal Link Graph Summary</h2>
+        ${
+          report.summary.internal_links
+            ? `<p><strong>Orphan pages:</strong> ${report.summary.internal_links.orphanPagesCount}</p>
+               <p><strong>Near-orphan pages:</strong> ${report.summary.internal_links.nearOrphanPagesCount}</p>
+               <p><strong>Nav-likely inlinks:</strong> ${report.summary.internal_links.navLikelyInlinksPercent}%</p>
+               <p><strong>Top anchors:</strong> ${report.summary.internal_links.topAnchors
+                 .map((item) => `${escapeHtml(item.anchor || "(empty)")} (${item.count})`)
+                 .join(", ") || "none"}</p>`
+            : "<p class='dim'>Internal link graph metrics unavailable.</p>"
+        }
+      </section>
+
+      <section class="panel">
+        <h2>SERP Quality Summary</h2>
+        <p><strong>title_h1_mismatch:</strong> ${serpCounts.mismatch}</p>
+        <p><strong>meta_description_missing:</strong> ${serpCounts.missing}</p>
+        <p><strong>meta_description_duplicate:</strong> ${serpCounts.duplicate}</p>
+        <p><strong>meta_description_spammy:</strong> ${serpCounts.spammy}</p>
+      </section>
+
+      <section class="panel">
+        <h2>Schema Quality Summary</h2>
+        <p><strong>breadcrumb_schema_invalid:</strong> ${report.issues.filter((item) => item.id === "breadcrumb_schema_invalid").length}</p>
+        <p><strong>org_schema_incomplete:</strong> ${report.issues.filter((item) => item.id === "org_schema_incomplete").length}</p>
+      </section>
+
+      <section class="panel">
+        <h2>Performance Summary</h2>
+        ${
+          !report.summary.performanceFocus && !report.summary.performanceHome
+            ? "<p class='dim'>Performance not measured.</p>"
+            : `
+          ${
+            report.summary.performanceFocus
+              ? `<p><strong>Focus:</strong> ${report.summary.performanceFocus.status}, LCP=${report.summary.performanceFocus.lcpMs ?? "n/a"}, INP=${report.summary.performanceFocus.inpMs ?? "n/a"}, CLS=${report.summary.performanceFocus.cls ?? "n/a"}, score=${report.summary.performanceFocus.scorePerf ?? "n/a"}</p>`
+              : ""
+          }
+          ${
+            report.summary.performanceHome
+              ? `<p><strong>Home:</strong> ${report.summary.performanceHome.status}, LCP=${report.summary.performanceHome.lcpMs ?? "n/a"}, INP=${report.summary.performanceHome.inpMs ?? "n/a"}, CLS=${report.summary.performanceHome.cls ?? "n/a"}, score=${report.summary.performanceHome.scorePerf ?? "n/a"}</p>`
+              : ""
+          }`
+        }
+      </section>
 
       ${
         fixes
