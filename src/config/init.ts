@@ -15,8 +15,16 @@ const DOC_TEMPLATES: Record<string, string> = {
   "audit-inputs.md": [
     "# Audit Inputs",
     "",
-    "Document expected input fields for `AuditInputs`.",
-    "Capture project defaults and allowed overrides here.",
+    "## Config defaults",
+    "",
+    "- `defaults.sitemap_urls: string[]` allows adding explicit sitemap endpoints for seed discovery.",
+    "",
+    "## Seed discovery behavior (STEP 1)",
+    "",
+    "- Start URL is always a seed.",
+    "- Additional seeds can come from `robots.txt` sitemap entries, `/sitemap.xml`, and `defaults.sitemap_urls`.",
+    "- `allowed_domains`, `include_patterns`, and `exclude_patterns` are applied deterministically.",
+    "- In `quick` coverage, seeds are capped by `max_pages` with start URL first.",
   ].join("\n"),
   "report-schema.md": [
     "# Report Schema",

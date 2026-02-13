@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { loadConfig } from "../config/index.js";
+import { discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
 import type { AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
 import { writeRunReports } from "../report/index.js";
@@ -34,7 +35,6 @@ export interface AuditCliOptions {
 interface ResolvedBriefFocus {
   briefText: string;
   primaryFocusUrl: string | null;
-  seedUrls: string[];
 }
 
 function buildRunId(now: Date = new Date()): string {
@@ -96,24 +96,14 @@ function normalizeFocusUrl(value: string | null, targetUrl: string): string | nu
   }
 }
 
-function buildSeedUrls(targetUrl: string, primaryFocusUrl: string | null): string[] {
-  if (!primaryFocusUrl || primaryFocusUrl === targetUrl) {
-    return [targetUrl];
-  }
-
-  return [targetUrl, primaryFocusUrl];
-}
-
 async function resolveBriefFocus(targetUrl: string, options: AuditCliOptions): Promise<ResolvedBriefFocus> {
   const briefText = await readBriefText(options.brief);
   const focusCandidate = options.focusUrl ?? extractFocusUrlFromBrief(briefText);
   const primaryFocusUrl = normalizeFocusUrl(focusCandidate, targetUrl);
-  const seedUrls = buildSeedUrls(targetUrl, primaryFocusUrl);
 
   return {
     briefText,
     primaryFocusUrl,
-    seedUrls,
   };
 }
 
@@ -221,7 +211,10 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   await writeFile(path.join(runDir, "brief.md"), `${inputs.brief.text}\n`, "utf-8");
   await writeFile(path.join(runDir, "inputs.json"), `${JSON.stringify(inputs, null, 2)}\n`, "utf-8");
 
-  const crawlTarget = resolvedBriefFocus.seedUrls[0] ?? normalizedUrl;
+  const seedDiscovery = await discoverSeeds(inputs);
+  await writeFile(path.join(runDir, "seed-discovery.json"), `${JSON.stringify(seedDiscovery, null, 2)}\n`, "utf-8");
+
+  const crawlTarget = seedDiscovery.seeds[0] ?? inputs.target;
   const response = await fetch(crawlTarget, {
     headers: {
       "user-agent": inputs.user_agent,

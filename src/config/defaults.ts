@@ -4,6 +4,7 @@ export interface ConfigDefaults {
   coverage: CoverageMode;
   max_pages: number;
   crawl_depth: number;
+  sitemap_urls: string[];
   include_patterns: string[];
   exclude_patterns: string[];
   allowed_domains: string[];
@@ -30,6 +31,7 @@ export const DEFAULT_CONFIG: SeoAuditConfig = {
     coverage: "surface",
     max_pages: 100,
     crawl_depth: 3,
+    sitemap_urls: [],
     include_patterns: [],
     exclude_patterns: [],
     allowed_domains: [],

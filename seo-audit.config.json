@@ -4,6 +4,7 @@
     "coverage": "surface",
     "max_pages": 100,
     "crawl_depth": 3,
+    "sitemap_urls": [],
     "include_patterns": [],
     "exclude_patterns": [],
     "allowed_domains": [],
