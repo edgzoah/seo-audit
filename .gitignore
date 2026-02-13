@@ -137,3 +137,7 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+SEO-AUDIT-CLI_MASTER_SPEC.txt
+.vscode/
+.agents/
+runs/

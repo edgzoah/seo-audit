@@ -1,0 +1,3 @@
+INCLUDES:
+  - CLEANCODE.md
+  - AGENT.md

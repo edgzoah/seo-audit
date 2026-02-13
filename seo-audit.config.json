@@ -1,0 +1,21 @@
+{
+  "config_version": 1,
+  "defaults": {
+    "coverage": "surface",
+    "max_pages": 100,
+    "crawl_depth": 3,
+    "include_patterns": [],
+    "exclude_patterns": [],
+    "allowed_domains": [],
+    "respect_robots": true,
+    "rendering_mode": "static_html",
+    "user_agent": "seo-audit-cli/0.1",
+    "timeout_ms": 10000,
+    "locale": {
+      "language": "en",
+      "country": "US"
+    },
+    "report_format": "md",
+    "llm_enabled": false
+  }
+}
