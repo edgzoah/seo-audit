@@ -6,7 +6,7 @@ import { crawlSite, discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
 import { generateOptionalLlmProposals } from "../llm/index.js";
 import type { Action, AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
-import { writeRunReports } from "../report/index.js";
+import { loadReportFromRun, writeRunDiffArtifacts, writeRunReports } from "../report/index.js";
 import { runRules } from "../rules/index.js";
 
 export interface AuditRunResult {
@@ -430,6 +430,11 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   }
 
   await writeRunReports(runDir, report);
+
+  if (inputs.baseline_run_id) {
+    const baselineReport = await loadReportFromRun(inputs.baseline_run_id);
+    await writeRunDiffArtifacts(runDir, baselineReport, report);
+  }
 
   return {
     runId,

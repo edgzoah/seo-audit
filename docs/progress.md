@@ -10,3 +10,4 @@
 - [x] Focus-aware weighting step implemented (spec block: PIPELINE STEP 5)
 - [x] Scoring step implemented (spec block: PIPELINE STEP 6)
 - [x] Optional LLM proposals via Codex CLI implemented (spec block: PIPELINE STEP 7)
+- [x] Report generation step implemented (spec block: PIPELINE STEP 8)

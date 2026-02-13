@@ -59,3 +59,12 @@ export async function writeRunReports(runDir: string, report: Report): Promise<v
   await writeFile(path.join(runDir, "report.md"), `${markdown}\n`, "utf-8");
   await writeFile(path.join(runDir, "report.llm.txt"), `${llm}\n`, "utf-8");
 }
+
+export async function writeRunDiffArtifacts(runDir: string, baselineReport: Report, currentReport: Report): Promise<void> {
+  const diff = buildDiffReport(baselineReport, currentReport);
+  const json = renderDiffReport(diff, "json");
+  const llm = renderDiffReport(diff, "llm");
+
+  await writeFile(path.join(runDir, "diff.json"), `${json}\n`, "utf-8");
+  await writeFile(path.join(runDir, "diff.llm.txt"), `${llm}\n`, "utf-8");
+}
