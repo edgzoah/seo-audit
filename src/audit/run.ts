@@ -4,6 +4,7 @@ import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { crawlSite, discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
+import { generateOptionalLlmProposals } from "../llm/index.js";
 import type { Action, AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
 import { writeRunReports } from "../report/index.js";
 import { runRules } from "../rules/index.js";
@@ -416,6 +417,17 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     focusUrl,
     inlinkUrls,
   });
+
+  if (inputs.llm_enabled) {
+    const llmOutput = await generateOptionalLlmProposals({
+      runDir,
+      report,
+    });
+    if (llmOutput) {
+      report.proposed_fixes = llmOutput.proposed_fixes;
+      report.prioritized_actions = llmOutput.prioritized_actions;
+    }
+  }
 
   await writeRunReports(runDir, report);
 
