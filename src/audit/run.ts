@@ -31,6 +31,12 @@ export interface AuditCliOptions {
   constraints?: string;
 }
 
+interface ResolvedBriefFocus {
+  briefText: string;
+  primaryFocusUrl: string | null;
+  seedUrls: string[];
+}
+
 function buildRunId(now: Date = new Date()): string {
   const iso = now.toISOString().replace(/[:.]/g, "-");
   return `run-${iso}`;
@@ -57,11 +63,65 @@ async function readBriefText(briefPath: string | undefined): Promise<string> {
   return content.trim();
 }
 
+function extractFocusUrlFromBrief(briefText: string): string | null {
+  const patterns = [/^\s*focus\s+on\s*:\s*(\S+)/im, /^\s*focus\s+on\s+(\S+)/im];
+
+  for (const pattern of patterns) {
+    const match = briefText.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+function normalizeFocusUrl(value: string | null, targetUrl: string): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    if (trimmed.startsWith("/")) {
+      return new URL(trimmed, targetUrl).toString();
+    }
+    return trimmed;
+  }
+}
+
+function buildSeedUrls(targetUrl: string, primaryFocusUrl: string | null): string[] {
+  if (!primaryFocusUrl || primaryFocusUrl === targetUrl) {
+    return [targetUrl];
+  }
+
+  return [targetUrl, primaryFocusUrl];
+}
+
+async function resolveBriefFocus(targetUrl: string, options: AuditCliOptions): Promise<ResolvedBriefFocus> {
+  const briefText = await readBriefText(options.brief);
+  const focusCandidate = options.focusUrl ?? extractFocusUrlFromBrief(briefText);
+  const primaryFocusUrl = normalizeFocusUrl(focusCandidate, targetUrl);
+  const seedUrls = buildSeedUrls(targetUrl, primaryFocusUrl);
+
+  return {
+    briefText,
+    primaryFocusUrl,
+    seedUrls,
+  };
+}
+
 function buildInputs(
   targetUrl: string,
   defaults: Awaited<ReturnType<typeof loadConfig>>["defaults"],
   options: AuditCliOptions,
-  briefText: string,
+  resolved: ResolvedBriefFocus,
 ): AuditInputs {
   const renderingMode: RenderingMode = options.headless ? "headless" : defaults.rendering_mode;
   const constraints = parseConstraints(options.constraints);
@@ -84,9 +144,9 @@ function buildInputs(
     llm_enabled: options.llm ?? defaults.llm_enabled,
     baseline_run_id: options.baseline ?? null,
     brief: {
-      text: briefText,
+      text: resolved.briefText,
       focus: {
-        primary_url: options.focusUrl ?? null,
+        primary_url: resolved.primaryFocusUrl,
         primary_keyword: options.focusKeyword ?? null,
         goal: options.focusGoal ?? null,
         current_position: null,
@@ -151,16 +211,18 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const startedAtDate = new Date();
   const normalizedUrl = new URL(target).toString();
   const config = await loadConfig();
-  const briefText = await readBriefText(options.brief);
-  const inputs = buildInputs(normalizedUrl, config.defaults, options, briefText);
+  const resolvedBriefFocus = await resolveBriefFocus(normalizedUrl, options);
+  const inputs = buildInputs(normalizedUrl, config.defaults, options, resolvedBriefFocus);
 
   const runId = buildRunId(startedAtDate);
   const runDir = path.join(process.cwd(), "runs", runId);
   await mkdir(runDir, { recursive: true });
 
+  await writeFile(path.join(runDir, "brief.md"), `${inputs.brief.text}\n`, "utf-8");
   await writeFile(path.join(runDir, "inputs.json"), `${JSON.stringify(inputs, null, 2)}\n`, "utf-8");
 
-  const response = await fetch(normalizedUrl, {
+  const crawlTarget = resolvedBriefFocus.seedUrls[0] ?? normalizedUrl;
+  const response = await fetch(crawlTarget, {
     headers: {
       "user-agent": inputs.user_agent,
       accept: "text/html,application/xhtml+xml",
@@ -169,7 +231,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   });
 
   const html = await response.text();
-  const extracted = extractPageData(html, normalizedUrl, response.url || normalizedUrl, response.status);
+  const extracted = extractPageData(html, crawlTarget, response.url || crawlTarget, response.status);
   const issues = runRules(extracted);
 
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify([extracted], null, 2)}\n`, "utf-8");
