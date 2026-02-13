@@ -15,6 +15,91 @@ interface CodexRunResult {
   stderr: string;
 }
 
+const MAX_ISSUES_FOR_LLM = 50;
+const MAX_EVIDENCE_PER_ISSUE = 3;
+const MAX_AFFECTED_URLS_PER_ISSUE = 5;
+const MAX_PAGES_FOR_LLM = 120;
+
+function compareStrings(a: string, b: string): number {
+  return a.localeCompare(b, "en");
+}
+
+function severityOrder(severity: "error" | "warning" | "notice"): number {
+  switch (severity) {
+    case "error":
+      return 3;
+    case "warning":
+      return 2;
+    case "notice":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function sanitizeContextPayload(report: Report): Record<string, unknown> {
+  const compactIssues = [...report.issues]
+    .sort((a, b) => {
+      const severityDelta = severityOrder(b.severity) - severityOrder(a.severity);
+      if (severityDelta !== 0) {
+        return severityDelta;
+      }
+      const rankDelta = b.rank - a.rank;
+      if (rankDelta !== 0) {
+        return rankDelta;
+      }
+      return a.id.localeCompare(b.id, "en");
+    })
+    .slice(0, MAX_ISSUES_FOR_LLM)
+    .map((issue) => ({
+      id: issue.id,
+      category: issue.category,
+      severity: issue.severity,
+      rank: issue.rank,
+      title: issue.title,
+      description: issue.description,
+      recommendation: issue.recommendation,
+      tags: [...issue.tags].sort(compareStrings),
+      affected_urls: issue.affected_urls.slice(0, MAX_AFFECTED_URLS_PER_ISSUE),
+      affected_urls_total: issue.affected_urls.length,
+      evidence: issue.evidence.slice(0, MAX_EVIDENCE_PER_ISSUE).map((item) => ({
+        type: item.type,
+        message: item.message,
+        url: item.url,
+        source_url: item.source_url,
+        target_url: item.target_url,
+        status: item.status,
+      })),
+    }));
+
+  const compactPages = [...report.pages]
+    .sort((a, b) => a.url.localeCompare(b.url, "en"))
+    .slice(0, MAX_PAGES_FOR_LLM)
+    .map((page) => ({
+      url: page.url,
+      final_url: page.final_url,
+      status: page.status,
+      title: page.title,
+      canonical: page.canonical,
+    }));
+
+  return {
+    run_id: report.run_id,
+    summary: report.summary,
+    focus: report.inputs.brief.focus,
+    issue_count_total: report.issues.length,
+    issues: compactIssues,
+    page_count_total: report.pages.length,
+    pages: compactPages,
+    limits: {
+      issues: MAX_ISSUES_FOR_LLM,
+      evidence_per_issue: MAX_EVIDENCE_PER_ISSUE,
+      affected_urls_per_issue: MAX_AFFECTED_URLS_PER_ISSUE,
+      pages: MAX_PAGES_FOR_LLM,
+    },
+  };
+}
+
 function parseJsonLoose(raw: string): unknown {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -245,6 +330,7 @@ function buildMainPrompt(input: {
   return [
     "You are generating SEO audit proposals.",
     "Use only evidence present in the payload report JSON.",
+    "Payload is compacted for token efficiency; prioritize high-severity and high-rank items first.",
     "Return STRICT JSON only. No markdown, no prose outside JSON.",
     "",
     "Required JSON shape:",
@@ -302,13 +388,7 @@ export async function generateOptionalLlmProposals(input: {
     path.join(process.cwd(), "docs", "workflow.md"),
   ];
 
-  const contextPayload = {
-    run_id: input.report.run_id,
-    summary: input.report.summary,
-    issues: input.report.issues,
-    pages: input.report.pages,
-    focus: input.report.inputs.brief.focus,
-  };
+  const contextPayload = sanitizeContextPayload(input.report);
 
   const payloadFileName = "llm.input.json";
   const payloadFilePath = path.join(input.runDir, payloadFileName);

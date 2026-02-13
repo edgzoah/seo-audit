@@ -7,3 +7,4 @@
 Troubleshooting LLM:
 - `--llm` uses `codex exec` in non-interactive mode.
 - Ensure `codex exec --help` works and auth is configured.
+- LLM payload is compacted (top issues/pages) to reduce token usage.
