@@ -2,9 +2,9 @@
 
 import { Command, InvalidArgumentError } from "commander";
 
-import { runAuditCommand } from "./audit/run.js";
+import { runAuditCommand, type AuditCliOptions } from "./audit/run.js";
 import { initWorkspace } from "./config/index.js";
-import { loadReportFromRun, renderReport, type ReportFormat } from "./report/index.js";
+import { loadReportFromRun, renderReport, type CoverageMode, type ReportFormat } from "./report/index.js";
 
 function parseReportFormat(value: string): ReportFormat {
   if (value === "json" || value === "md" || value === "llm") {
@@ -12,6 +12,23 @@ function parseReportFormat(value: string): ReportFormat {
   }
 
   throw new InvalidArgumentError("Format must be one of: json, md, llm");
+}
+
+function parseCoverageMode(value: string): CoverageMode {
+  if (value === "quick" || value === "surface" || value === "full") {
+    return value;
+  }
+
+  throw new InvalidArgumentError("Coverage must be one of: quick, surface, full");
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InvalidArgumentError("Value must be a positive integer");
+  }
+
+  return parsed;
 }
 
 function printCliError(error: unknown): void {
@@ -50,10 +67,24 @@ async function run(): Promise<void> {
 
   program
     .command("audit")
-    .description("Run an audit for the given URL")
-    .argument("<url>", "Target URL")
-    .action(async (url: string) => {
-      const result = await runAuditCommand(url);
+    .description("Run an audit for the given URL or local path")
+    .argument("<url-or-path>", "Target URL or local path")
+    .option("-C, --coverage <mode>", "Coverage mode: quick|surface|full", parseCoverageMode)
+    .option("-m, --max-pages <n>", "Maximum number of pages", parsePositiveInteger)
+    .option("--depth <n>", "Maximum crawl depth", parsePositiveInteger)
+    .option("--format <format>", "Report format: json|md|llm", parseReportFormat)
+    .option("--refresh", "Refresh cached inputs for this run")
+    .option("--headless", "Use headless rendering mode")
+    .option("--no-robots", "Disable robots.txt restrictions")
+    .option("--llm", "Enable optional LLM proposals")
+    .option("--baseline <run-id>", "Baseline run ID for regression comparison")
+    .option("--brief <path>", "Path to pre-audit brief markdown file")
+    .option("--focus-url <url-or-path>", "Primary focus page URL or path")
+    .option("--focus-keyword <keyword>", "Primary focus keyword")
+    .option("--focus-goal <goal>", "Primary focus goal")
+    .option("--constraints <items>", "Semicolon-separated constraints (e.g. c1;c2;c3)")
+    .action(async (target: string, options: AuditCliOptions) => {
+      const result = await runAuditCommand(target, options);
       console.log(`Run ID: ${result.runId}`);
       console.log(`Run directory: ${result.runDir}`);
       console.log(`Pages extract: ${result.runDir}/pages.json`);
