@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { loadConfig } from "../config/index.js";
-import { discoverSeeds } from "../crawl/index.js";
+import { crawlSite, discoverSeeds } from "../crawl/index.js";
 import { extractPageData } from "../extract/index.js";
 import type { AuditInputs, CoverageMode, Issue, PageExtract, RenderingMode, Report, ReportFormat } from "../report/report-schema.js";
 import { writeRunReports } from "../report/index.js";
@@ -214,17 +214,16 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const seedDiscovery = await discoverSeeds(inputs);
   await writeFile(path.join(runDir, "seed-discovery.json"), `${JSON.stringify(seedDiscovery, null, 2)}\n`, "utf-8");
 
-  const crawlTarget = seedDiscovery.seeds[0] ?? inputs.target;
-  const response = await fetch(crawlTarget, {
-    headers: {
-      "user-agent": inputs.user_agent,
-      accept: "text/html,application/xhtml+xml",
-    },
-    signal: AbortSignal.timeout(inputs.timeout_ms),
-  });
+  const crawl = await crawlSite(inputs, seedDiscovery.seeds);
+  const crawlJsonl = crawl.events.map((event) => JSON.stringify(event)).join("\n");
+  await writeFile(path.join(runDir, "crawl.jsonl"), crawlJsonl.length > 0 ? `${crawlJsonl}\n` : "", "utf-8");
 
-  const html = await response.text();
-  const extracted = extractPageData(html, crawlTarget, response.url || crawlTarget, response.status);
+  const firstPage = crawl.pages[0];
+  if (!firstPage) {
+    throw new Error("Crawl did not return any fetchable pages.");
+  }
+
+  const extracted = extractPageData(firstPage.html, firstPage.url, firstPage.final_url, firstPage.status);
   const issues = runRules(extracted);
 
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify([extracted], null, 2)}\n`, "utf-8");

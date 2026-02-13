@@ -1,5 +1,6 @@
 import { loadConfig } from "../config/index.js";
 import type { AuditInputs } from "../report/report-schema.js";
+import { load } from "cheerio";
 
 export type SeedSource = "start_url" | "robots_sitemap" | "default_sitemap" | "config_sitemap";
 
@@ -13,6 +14,32 @@ export interface SeedDiscoveryResult {
   discovered: DiscoveredSeed[];
   robots_disallow: string[];
   sitemap_urls_checked: string[];
+}
+
+export interface CrawlEvent {
+  type: "fetched" | "fetch_error";
+  url: string;
+  final_url: string | null;
+  status: number | null;
+  depth: number;
+  content_type: string | null;
+  timing_ms: number;
+  error?: string;
+}
+
+export interface CrawledPage {
+  url: string;
+  final_url: string;
+  status: number;
+  depth: number;
+  content_type: string | null;
+  response_headers: Record<string, string>;
+  html: string;
+}
+
+export interface CrawlResult {
+  pages: CrawledPage[];
+  events: CrawlEvent[];
 }
 
 function compareStrings(a: string, b: string): number {
@@ -281,4 +308,196 @@ export async function discoverSeeds(inputs: AuditInputs): Promise<SeedDiscoveryR
     robots_disallow: robotsRules,
     sitemap_urls_checked: sitemapUrlsChecked,
   };
+}
+
+function patternize(url: string): string {
+  const parsed = new URL(url);
+  const rawSegments = parsed.pathname.split("/").filter((segment) => segment.length > 0);
+  const normalizedSegments = rawSegments.map((segment) => {
+    if (/^\d+$/.test(segment)) {
+      return "{n}";
+    }
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) {
+      return "{id}";
+    }
+    if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(segment) && segment.length >= 12) {
+      return "{slug}";
+    }
+    return segment;
+  });
+
+  return `/${normalizedSegments.join("/")}`;
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+  const entries = Array.from(headers.entries()).sort((a, b) => compareStrings(a[0], b[0]));
+  const result: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    result[key] = value;
+  }
+  return result;
+}
+
+function extractInternalLinks(html: string, pageUrl: string): string[] {
+  const parsedPageUrl = new URL(pageUrl);
+  const pageHost = parsedPageUrl.host.toLowerCase();
+  const links = new Set<string>();
+  const $ = load(html);
+
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href")?.trim();
+    if (!href || href.startsWith("#") || href.startsWith("javascript:")) {
+      return;
+    }
+
+    const normalized = normalizeUrl(href, pageUrl);
+    if (!normalized) {
+      return;
+    }
+
+    try {
+      const normalizedUrl = new URL(normalized);
+      if (normalizedUrl.host.toLowerCase() === pageHost) {
+        links.add(normalizedUrl.toString());
+      }
+    } catch {
+      // ignore invalid normalized links
+    }
+  });
+
+  return Array.from(links).sort(compareStrings);
+}
+
+function shouldAllowUrlForCrawl(url: string, inputs: AuditInputs, allowedHosts: Set<string>): boolean {
+  if (!isAllowedByDomain(url, allowedHosts)) {
+    return false;
+  }
+
+  const excluded = inputs.exclude_patterns.some((pattern) => {
+    const trimmed = pattern.trim();
+    return trimmed.length > 0 && url.includes(trimmed);
+  });
+  if (excluded) {
+    return false;
+  }
+
+  const includePatterns = inputs.include_patterns.map((pattern) => pattern.trim()).filter((pattern) => pattern.length > 0);
+  if (includePatterns.length > 0 && !matchesPattern(url, includePatterns)) {
+    return false;
+  }
+
+  return true;
+}
+
+export async function crawlSite(inputs: AuditInputs, seeds: string[]): Promise<CrawlResult> {
+  const normalizedSeeds = Array.from(
+    new Set(
+      seeds
+        .map((seed) => normalizeUrl(seed, inputs.target))
+        .filter((seed): seed is string => Boolean(seed)),
+    ),
+  );
+
+  const queue: Array<{ url: string; depth: number }> = normalizedSeeds.map((url) => ({ url, depth: 0 }));
+  const queued = new Set(normalizedSeeds);
+  const visited = new Set<string>();
+  const pages: CrawledPage[] = [];
+  const events: CrawlEvent[] = [];
+  const allowedHosts = resolveAllowedHosts(inputs);
+  const surfacePatterns = new Set<string>();
+
+  while (queue.length > 0 && pages.length < inputs.max_pages) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    if (visited.has(current.url)) {
+      continue;
+    }
+    visited.add(current.url);
+
+    if (!shouldAllowUrlForCrawl(current.url, inputs, allowedHosts)) {
+      continue;
+    }
+
+    if (inputs.coverage === "surface") {
+      const pattern = patternize(current.url);
+      if (surfacePatterns.has(pattern)) {
+        continue;
+      }
+      surfacePatterns.add(pattern);
+    }
+
+    const startedAt = Date.now();
+    try {
+      const response = await fetch(current.url, {
+        headers: {
+          "user-agent": inputs.user_agent,
+          accept: "text/html,application/xhtml+xml",
+        },
+        signal: AbortSignal.timeout(inputs.timeout_ms),
+      });
+
+      const timingMs = Date.now() - startedAt;
+      const finalUrl = response.url || current.url;
+      const contentType = response.headers.get("content-type");
+      const headersRecord = headersToRecord(response.headers);
+      const html = await response.text();
+
+      pages.push({
+        url: current.url,
+        final_url: finalUrl,
+        status: response.status,
+        depth: current.depth,
+        content_type: contentType,
+        response_headers: headersRecord,
+        html,
+      });
+
+      events.push({
+        type: "fetched",
+        url: current.url,
+        final_url: finalUrl,
+        status: response.status,
+        depth: current.depth,
+        content_type: contentType,
+        timing_ms: timingMs,
+      });
+
+      const canDiscoverLinks = (inputs.coverage === "surface" || inputs.coverage === "full") && current.depth < inputs.crawl_depth;
+      if (!canDiscoverLinks) {
+        continue;
+      }
+
+      const internalLinks = extractInternalLinks(html, finalUrl);
+      for (const link of internalLinks) {
+        if (queued.has(link) || visited.has(link)) {
+          continue;
+        }
+
+        if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
+          continue;
+        }
+
+        queue.push({ url: link, depth: current.depth + 1 });
+        queued.add(link);
+      }
+    } catch (error) {
+      const timingMs = Date.now() - startedAt;
+      const message = error instanceof Error ? error.message : String(error);
+      events.push({
+        type: "fetch_error",
+        url: current.url,
+        final_url: null,
+        status: null,
+        depth: current.depth,
+        content_type: null,
+        timing_ms: timingMs,
+        error: message,
+      });
+    }
+  }
+
+  return { pages, events };
 }
