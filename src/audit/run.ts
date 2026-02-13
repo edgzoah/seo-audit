@@ -324,10 +324,18 @@ function severityWeight(severity: Issue["severity"]): number {
 }
 
 function categoryToScoreBucket(category: string): "seo" | "technical" | "content" | "security" | "performance" {
-  if (category === "seo" || category === "indexability" || category === "schema") {
+  if (
+    category === "seo" ||
+    category === "indexability" ||
+    category === "schema" ||
+    category === "serp" ||
+    category === "internal_links" ||
+    category === "schema_quality" ||
+    category === "indexation_conflicts"
+  ) {
     return "seo";
   }
-  if (category === "content") {
+  if (category === "content" || category === "intent" || category === "content_quality" || category === "a11y") {
     return "content";
   }
   if (category === "security") {
@@ -628,10 +636,15 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   );
   const graph = buildInternalLinkGraph(extractedPages, normalizeUrl(inputs.brief.focus.primary_url, inputs.target));
   const graphEnrichedPages = graph.pages;
+  const sitemapSeedUrls = seedDiscovery.discovered
+    .filter((entry) => entry.source !== "start_url")
+    .map((entry) => entry.url);
   const baseIssues = await runRules({
     pages: graphEnrichedPages,
     robotsDisallow: seedDiscovery.robots_disallow,
     timeoutMs: inputs.timeout_ms,
+    focusUrl: normalizeUrl(inputs.brief.focus.primary_url, inputs.target),
+    sitemapUrls: sitemapSeedUrls,
   });
   const focusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);

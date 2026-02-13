@@ -10,6 +10,8 @@ interface RuleContext {
   pages: PageExtract[];
   robotsDisallow: string[];
   timeoutMs: number;
+  focusUrl: string | null;
+  sitemapUrls: string[];
 }
 
 interface IssueInput {
@@ -31,6 +33,36 @@ interface LinkFailureEvidence {
   error: string | null;
 }
 
+interface AnchorStats {
+  total: number;
+  generic: number;
+  empty: number;
+  navLikely: number;
+}
+
+const GENERIC_ANCHORS = new Set<string>([
+  "kliknij",
+  "więcej",
+  "zobacz",
+  "czytaj",
+  "tutaj",
+  "sprawdź",
+  "dowiedz się",
+  "link",
+  "przejdź",
+  "read more",
+  "learn more",
+  "here",
+  "more",
+]);
+
+const SECTION_KEYWORDS = {
+  forWho: ["dla kogo", "kiedy", "wskazania"],
+  process: ["jak wygląda", "przebieg", "etapy"],
+  pricingOrLogistics: ["cennik", "koszt", "czas", "umów", "rezerwacja"],
+  faq: ["faq", "pytania", "?"],
+} as const;
+
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
 }
@@ -47,9 +79,163 @@ function normalizeText(value: string | null): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeForCompare(value: string | null): string {
+  return (value ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(value: string | null): Set<string> {
+  const normalized = normalizeForCompare(value);
+  if (normalized.length === 0) {
+    return new Set<string>();
+  }
+  return new Set(normalized.split(" ").filter((token) => token.length >= 2));
+}
+
+function jaccardSimilarity(a: string | null, b: string | null): number {
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 && setB.size === 0) {
+    return 1;
+  }
+  if (setA.size === 0 || setB.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) {
+      intersection += 1;
+    }
+  }
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function parseRobotsDirectives(value: string | null): Set<string> {
+  if (!value) {
+    return new Set<string>();
+  }
+  return new Set(
+    value
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+}
+
+function parseNoindexFromHeader(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+  return /(^|[\s,;])noindex([\s,;]|$)/i.test(value);
+}
+
+function isServiceLocalPage(url: string): boolean {
+  const pathname = new URL(url).pathname.toLowerCase();
+  return pathname.includes("/psychoterapia/") || pathname.includes("/psychiatria/") || pathname.includes("/terapia-");
+}
+
+function hasAnyKeyword(haystack: string, keywords: readonly string[]): boolean {
+  return keywords.some((keyword) => haystack.includes(keyword));
+}
+
+function extractTextChunks(mainText: string): string[] {
+  return mainText
+    .split(/\n{2,}|(?<=[.?!])\s+/)
+    .map((chunk) => normalizeForCompare(chunk))
+    .filter((chunk) => chunk.length >= 80);
+}
+
+function countTopKeywordRepeat(text: string): { topToken: string; count: number; ratio: number } {
+  const tokens = normalizeForCompare(text)
+    .split(" ")
+    .filter((token) => token.length >= 3);
+  if (tokens.length === 0) {
+    return { topToken: "", count: 0, ratio: 0 };
+  }
+
+  const histogram = new Map<string, number>();
+  for (const token of tokens) {
+    histogram.set(token, (histogram.get(token) ?? 0) + 1);
+  }
+
+  let topToken = "";
+  let topCount = 0;
+  for (const [token, count] of histogram.entries()) {
+    if (count > topCount || (count === topCount && token.localeCompare(topToken, "en") < 0)) {
+      topToken = token;
+      topCount = count;
+    }
+  }
+
+  return {
+    topToken,
+    count: topCount,
+    ratio: topCount / tokens.length,
+  };
+}
+
+function isGenericImageAlt(alt: string): boolean {
+  const normalized = normalizeForCompare(alt);
+  if (normalized.length < 4) {
+    return true;
+  }
+  return ["image", "zdjęcie", "photo", "banner", "grafika"].includes(normalized);
+}
+
+function collectSchemaObjects(parsed: Record<string, unknown>[]): Record<string, unknown>[] {
+  const output: Record<string, unknown>[] = [];
+
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        walk(item);
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    output.push(record);
+    if (record["@graph"]) {
+      walk(record["@graph"]);
+    }
+  };
+
+  for (const item of parsed) {
+    walk(item);
+  }
+  return output;
+}
+
+function hasSchemaType(record: Record<string, unknown>, expected: string): boolean {
+  const atType = record["@type"];
+  if (typeof atType === "string") {
+    return atType === expected;
+  }
+  if (Array.isArray(atType)) {
+    return atType.some((value) => value === expected);
+  }
+  return false;
+}
+
 function safeUrl(baseUrl: string, raw: string): string | null {
   try {
     return new URL(raw, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUrl(raw: string): string | null {
+  try {
+    return new URL(raw).toString();
   } catch {
     return null;
   }
@@ -148,11 +334,39 @@ function createSinglePageIssue(page: PageExtract, input: Omit<IssueInput, "affec
   });
 }
 
+function buildInlinkAnchorStats(pages: PageExtract[]): Map<string, AnchorStats> {
+  const statsByTarget = new Map<string, AnchorStats>();
+
+  for (const page of pages) {
+    for (const link of page.outlinksInternal) {
+      const key = normalizeUrl(link.targetUrl) ?? link.targetUrl;
+      const anchor = normalizeForCompare(link.anchorText);
+      const stats = statsByTarget.get(key) ?? { total: 0, generic: 0, empty: 0, navLikely: 0 };
+      stats.total += 1;
+      if (anchor.length === 0) {
+        stats.empty += 1;
+      }
+      if (anchor.length > 0 && GENERIC_ANCHORS.has(anchor)) {
+        stats.generic += 1;
+      }
+      if (link.isNavLikely) {
+        stats.navLikely += 1;
+      }
+      statsByTarget.set(key, stats);
+    }
+  }
+
+  return statsByTarget;
+}
+
 function collectDuplicateFieldIssues(input: {
   pages: PageExtract[];
   fieldName: "title" | "description";
   valueByPage: (page: PageExtract) => string | null;
-  issueId: "duplicate_title" | "duplicate_description";
+  issueId: "duplicate_title" | "duplicate_description" | "meta_description_duplicate";
+  category: string;
+  severity: IssueSeverity;
+  rank: number;
   title: string;
   description: string;
   recommendation: string;
@@ -177,9 +391,9 @@ function collectDuplicateFieldIssues(input: {
     issues.push(
       createIssue({
         id: input.issueId,
-        category: "seo",
-        severity: "warning",
-        rank: 7,
+        category: input.category,
+        severity: input.severity,
+        rank: input.rank,
         title: input.title,
         description: input.description,
         affectedUrls: uniqueUrls,
@@ -330,6 +544,8 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   const issues: Issue[] = [];
   const pages = context.pages;
   const statusByUrl = buildStatusMap(pages);
+  const inlinkAnchorStatsByTarget = buildInlinkAnchorStats(pages);
+  const normalizedFocusUrl = context.focusUrl ? normalizeUrl(context.focusUrl) ?? context.focusUrl : null;
 
   for (const page of pages) {
     const isOnPageAuditable = page.status >= 200 && page.status < 300;
@@ -337,8 +553,65 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     const descriptionLength = page.meta_description?.trim().length ?? 0;
     const h1Count = page.headings_outline.filter((heading) => heading.level === 1).length;
     const canonicalNormalized = page.canonical ? safeUrl(page.final_url, page.canonical) ?? page.canonical : null;
+    const h1Text = page.headings_outline.find((heading) => heading.level === 1)?.text ?? "";
+    const titleH1Similarity = jaccardSimilarity(page.titleText || page.title, h1Text);
+    const firstTwoHeadings = page.headings_outline.slice(0, 2).map((item) => item.text);
+    const headingDupSimilarity =
+      firstTwoHeadings.length === 2 ? jaccardSimilarity(firstTwoHeadings[0] ?? null, firstTwoHeadings[1] ?? null) : 0;
+    const noindexMeta = parseMetaNoindex(page.metaRobotsContent || page.meta_robots);
+    const noindexHeader = parseNoindexFromHeader(page.xRobotsTagHeader);
+    const anchorStats = inlinkAnchorStatsByTarget.get(normalizeUrl(page.final_url) ?? page.final_url) ?? {
+      total: 0,
+      generic: 0,
+      empty: 0,
+      navLikely: 0,
+    };
 
     if (isOnPageAuditable) {
+      if (h1Text.length > 0 && page.titleText.length > 0 && titleH1Similarity < 0.25) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "title_h1_mismatch",
+            category: "serp",
+            severity: "warning",
+            rank: 6,
+            title: "Title and H1 semantic mismatch",
+            description: "Title and H1 likely target different intent/topic.",
+            evidence: [
+              {
+                type: "content",
+                message: `Similarity score: ${Math.round(titleH1Similarity * 100)}%.`,
+                url: page.url,
+                details: { title: page.titleText, h1: h1Text },
+              },
+            ],
+            recommendation: "Align <title> and H1 around the same primary intent and phrasing.",
+          }),
+        );
+      }
+
+      if (h1Count > 1 || headingDupSimilarity >= 0.85) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "title_overwrite_risk",
+            category: "serp",
+            severity: "notice",
+            rank: 3,
+            title: "Potential title rewrite risk",
+            description: "Heading structure may increase risk of search snippet title rewrite.",
+            evidence: [
+              {
+                type: "content",
+                message:
+                  h1Count > 1 ? `Detected ${h1Count} H1 headings.` : `First heading similarity is ${Math.round(headingDupSimilarity * 100)}%.`,
+                url: page.url,
+              },
+            ],
+            recommendation: "Use one clear H1 and reduce near-duplicate heading fragments above the fold.",
+          }),
+        );
+      }
+
       if (!page.title || titleLength === 0) {
         issues.push(
           createSinglePageIssue(page, {
@@ -370,11 +643,11 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       if (!page.meta_description || descriptionLength === 0) {
         issues.push(
           createSinglePageIssue(page, {
-            id: "missing_description",
-            category: "seo",
+            id: "meta_description_missing",
+            category: "serp",
             severity: "warning",
-            rank: 7,
-            title: "Missing meta description",
+            rank: 5,
+            title: "Meta description missing",
             description: "Page does not define a meta description.",
             evidence: [{ type: "content", message: "No meta description extracted.", url: page.url }],
             recommendation: "Add a concise meta description aligned with search intent.",
@@ -384,7 +657,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         issues.push(
           createSinglePageIssue(page, {
             id: "description_length_out_of_range",
-            category: "seo",
+            category: "serp",
             severity: "notice",
             rank: 4,
             title: "Description length out of range",
@@ -393,6 +666,32 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
             recommendation: "Adjust description length to improve snippet quality.",
           }),
         );
+      }
+
+      if (page.metaDescriptionText.length > 0) {
+        const repeatStats = countTopKeywordRepeat(page.metaDescriptionText);
+        if (repeatStats.count >= 4 || repeatStats.ratio >= 0.22) {
+          issues.push(
+            createSinglePageIssue(page, {
+              id: "meta_description_spammy",
+              category: "serp",
+              severity: "notice",
+              rank: 3,
+              title: "Meta description may look spammy",
+              description: "Meta description has unusually repetitive keyword usage.",
+              evidence: [
+                {
+                  type: "content",
+                  message: `Top token "${repeatStats.topToken}" repeats ${repeatStats.count} times (${Math.round(
+                    repeatStats.ratio * 100,
+                  )}%).`,
+                  url: page.url,
+                },
+              ],
+              recommendation: "Rewrite description with natural language and lower repetition.",
+            }),
+          );
+        }
       }
 
       if (h1Count === 0) {
@@ -480,6 +779,88 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
           }),
         );
       }
+
+      if (isServiceLocalPage(page.final_url)) {
+        const intentHaystack = normalizeForCompare(`${page.headingTextConcat} ${page.mainText}`);
+        if (!hasAnyKeyword(intentHaystack, SECTION_KEYWORDS.forWho)) {
+          issues.push(
+            createSinglePageIssue(page, {
+              id: "missing_section_for_who",
+              category: "intent",
+              severity: "notice",
+              rank: 3,
+              title: "Missing section: for who / indications",
+              description: "Service page lacks a visible section clarifying who the service is for.",
+              evidence: [{ type: "content", message: "No keywords matched: dla kogo/kiedy/wskazania.", url: page.url }],
+              recommendation: "Add a section clarifying for whom the service is intended and when to use it.",
+            }),
+          );
+        }
+        if (!hasAnyKeyword(intentHaystack, SECTION_KEYWORDS.process)) {
+          issues.push(
+            createSinglePageIssue(page, {
+              id: "missing_section_process",
+              category: "intent",
+              severity: "notice",
+              rank: 3,
+              title: "Missing section: process",
+              description: "Service page does not explain process/flow clearly.",
+              evidence: [{ type: "content", message: "No keywords matched: jak wygląda/przebieg/etapy.", url: page.url }],
+              recommendation: "Add process details (steps, what to expect, timeline).",
+            }),
+          );
+        }
+        if (!hasAnyKeyword(intentHaystack, SECTION_KEYWORDS.pricingOrLogistics)) {
+          issues.push(
+            createSinglePageIssue(page, {
+              id: "missing_section_pricing_or_logistics",
+              category: "intent",
+              severity: "notice",
+              rank: 2,
+              title: "Missing section: pricing/logistics",
+              description: "Service page does not clearly cover cost, duration, or booking logistics.",
+              evidence: [{ type: "content", message: "No keywords matched: cennik/koszt/czas/umów/rezerwacja.", url: page.url }],
+              recommendation: "Add practical information such as price range, session duration, and booking method.",
+            }),
+          );
+        }
+        if (!hasAnyKeyword(intentHaystack, SECTION_KEYWORDS.faq)) {
+          issues.push(
+            createSinglePageIssue(page, {
+              id: "missing_section_faq",
+              category: "intent",
+              severity: "notice",
+              rank: 2,
+              title: "Missing FAQ section",
+              description: "Service page lacks FAQ-style Q&A coverage.",
+              evidence: [{ type: "content", message: "No FAQ markers detected.", url: page.url }],
+              recommendation: "Add FAQ section addressing common service questions and concerns.",
+            }),
+          );
+        }
+      }
+
+      const thinThreshold = isServiceLocalPage(page.final_url) ? 300 : 150;
+      if (page.wordCountMain < thinThreshold) {
+        issues.push(
+          createSinglePageIssue(page, {
+            id: "thin_content",
+            category: "content_quality",
+            severity: "warning",
+            rank: 5,
+            title: "Thin main content",
+            description: "Main content appears too short for the detected page type.",
+            evidence: [
+              {
+                type: "content",
+                message: `wordCountMain=${page.wordCountMain}, threshold=${thinThreshold}.`,
+                url: page.url,
+              },
+            ],
+            recommendation: "Expand core content with concrete, intent-aligned sections and examples.",
+          }),
+        );
+      }
     }
 
     if (isBlockedByRobots(page.url, context.robotsDisallow)) {
@@ -493,6 +874,27 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
           description: "URL appears blocked by robots.txt disallow rules.",
           evidence: [{ type: "http", message: "Matched robots disallow rule.", url: page.url }],
           recommendation: "Adjust robots rules if this URL should be crawlable.",
+        }),
+      );
+    }
+
+    if (parseMetaNoindex(page.metaRobotsContent) !== parseNoindexFromHeader(page.xRobotsTagHeader)) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "robots_meta_xrobots_conflict",
+          category: "indexation_conflicts",
+          severity: "warning",
+          rank: 8,
+          title: "Meta robots and X-Robots-Tag conflict",
+          description: "Meta robots and X-Robots-Tag header send conflicting indexation directives.",
+          evidence: [
+            {
+              type: "http",
+              message: `metaRobots="${page.metaRobotsContent || "(empty)"}", xRobotsTag="${page.xRobotsTagHeader || "(empty)"}"`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Align meta robots and X-Robots-Tag to a single indexation intent.",
         }),
       );
     }
@@ -581,6 +983,75 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       );
     }
 
+    const schemaObjects = collectSchemaObjects(page.jsonLdParsed);
+    const orgLikeObjects = schemaObjects.filter((record) => hasSchemaType(record, "Organization") || hasSchemaType(record, "LocalBusiness"));
+    const incompleteOrgSchemas = orgLikeObjects.filter((record) => {
+      const hasName = typeof record.name === "string" && normalizeText(record.name)?.length;
+      const hasUrl = typeof record.url === "string" && normalizeText(record.url)?.length;
+      const hasLogo = typeof record.logo === "string" || (record.logo && typeof record.logo === "object");
+      return !(hasName && hasUrl && hasLogo);
+    });
+    if (isOnPageAuditable && incompleteOrgSchemas.length > 0) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "org_schema_incomplete",
+          category: "schema_quality",
+          severity: "notice",
+          rank: 4,
+          title: "Organization schema is incomplete",
+          description: "Organization/LocalBusiness schema is missing required minimum fields.",
+          evidence: [
+            {
+              type: "schema",
+              message: `Incomplete org-like schema blocks: ${incompleteOrgSchemas.length}.`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Add minimum fields: name, url, logo for organization-like schema objects.",
+        }),
+      );
+    }
+
+    const breadcrumbObjects = schemaObjects.filter((record) => hasSchemaType(record, "BreadcrumbList"));
+    const invalidBreadcrumbCount = breadcrumbObjects.filter((record) => {
+      const list = record.itemListElement;
+      if (!Array.isArray(list) || list.length === 0) {
+        return true;
+      }
+      return list.some((item) => {
+        if (!item || typeof item !== "object") {
+          return true;
+        }
+        const itemRecord = item as Record<string, unknown>;
+        const embedded = itemRecord.item;
+        const hasName = typeof itemRecord.name === "string" || (embedded && typeof embedded === "object" && typeof (embedded as Record<string, unknown>).name === "string");
+        const hasUrl =
+          typeof itemRecord.item === "string" ||
+          (embedded && typeof embedded === "object" && typeof (embedded as Record<string, unknown>).url === "string");
+        return !(hasName && hasUrl);
+      });
+    }).length;
+    if (isOnPageAuditable && invalidBreadcrumbCount > 0) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "breadcrumb_schema_invalid",
+          category: "schema_quality",
+          severity: "warning",
+          rank: 6,
+          title: "Breadcrumb schema appears invalid",
+          description: "BreadcrumbList schema is missing required item chain fields.",
+          evidence: [
+            {
+              type: "schema",
+              message: `Invalid BreadcrumbList blocks: ${invalidBreadcrumbCount}.`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Provide complete itemListElement chain with url and name per breadcrumb item.",
+        }),
+      );
+    }
+
     if (!page.security.is_https) {
       issues.push(
         createSinglePageIssue(page, {
@@ -635,6 +1106,133 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
         }),
       );
     }
+
+    if (page.schemaTypesDetected.length > 0 && (noindexMeta || noindexHeader || isBlockedByRobots(page.url, context.robotsDisallow))) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "schema_blocked_or_noindex_conflict",
+          category: "schema_quality",
+          severity: "notice",
+          rank: 4,
+          title: "Schema present on blocked/noindex page",
+          description: "Structured data is present, but the page is blocked or marked noindex.",
+          evidence: [
+            {
+              type: "schema",
+              message: `schemaTypes=${page.schemaTypesDetected.join(", ")}`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Resolve indexation status first or limit schema to pages intended for indexing.",
+        }),
+      );
+    }
+
+    if (!page.htmlLang || page.htmlLang.trim().length === 0) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "missing_html_lang",
+          category: "a11y",
+          severity: "notice",
+          rank: 2,
+          title: "Missing html[lang]",
+          description: "The root <html> element does not declare a language.",
+          evidence: [{ type: "content", message: "html[lang] is missing or empty.", url: page.url }],
+          recommendation: "Set html[lang] to the primary language of page content.",
+        }),
+      );
+    }
+
+    if (page.linksWithoutAccessibleNameCount > 0) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "links_without_accessible_name",
+          category: "a11y",
+          severity: "notice",
+          rank: 2,
+          title: "Links without accessible name",
+          description: "One or more links are missing visible text and accessibility labels.",
+          evidence: [
+            {
+              type: "content",
+              message: `Count: ${page.linksWithoutAccessibleNameCount}.`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Add descriptive anchor text or aria-label/title for unlabeled links.",
+        }),
+      );
+    }
+
+    if (page.images.missing_alt_count > 0) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "images_alt_generic",
+          category: "a11y",
+          severity: "notice",
+          rank: 2,
+          title: "Generic or missing image alt text",
+          description: "Image alt text quality is weak (missing and/or likely generic).",
+          evidence: [
+            {
+              type: "content",
+              message: `missingAltCount=${page.images.missing_alt_count}.`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Use concise, descriptive alt text that reflects image meaning in context.",
+        }),
+      );
+    }
+
+    if (page.inlinksCount === 0 && !new URL(page.final_url).pathname.match(/^\/?$/)) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "orphan_page",
+          category: "internal_links",
+          severity: "warning",
+          rank: 6,
+          title: "Orphan page",
+          description: "Page has no internal inlinks.",
+          evidence: [{ type: "link", message: "inlinksCount is 0.", url: page.url }],
+          recommendation: "Add contextual internal links from relevant pages.",
+        }),
+      );
+    } else if (page.inlinksCount <= 1 && !new URL(page.final_url).pathname.match(/^\/?$/)) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "near_orphan_page",
+          category: "internal_links",
+          severity: "notice",
+          rank: 4,
+          title: "Near-orphan page",
+          description: "Page has one or fewer internal inlinks.",
+          evidence: [{ type: "link", message: `inlinksCount is ${page.inlinksCount}.`, url: page.url }],
+          recommendation: "Increase internal link support with intent-relevant anchors.",
+        }),
+      );
+    }
+
+    if (anchorStats.total > 0 && anchorStats.navLikely / anchorStats.total > 0.5) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "excessive_nav_only_inlinks",
+          category: "internal_links",
+          severity: "notice",
+          rank: 3,
+          title: "Inlinks are mostly navigation/footer links",
+          description: "Most inlinks to this page appear to come from nav/header/footer placements.",
+          evidence: [
+            {
+              type: "link",
+              message: `navLikelyInlinks=${anchorStats.navLikely}/${anchorStats.total}.`,
+              url: page.url,
+            },
+          ],
+          recommendation: "Add contextual in-content links from semantically related pages.",
+        }),
+      );
+    }
   }
 
   issues.push(
@@ -643,19 +1241,179 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       fieldName: "title",
       valueByPage: (page) => page.title,
       issueId: "duplicate_title",
+      category: "seo",
+      severity: "warning",
+      rank: 7,
       title: "Duplicate titles detected",
       description: "Multiple pages share identical title text.",
       recommendation: "Make each page title unique and intent-specific.",
     }),
   );
 
+  const chunkToUrls = new Map<string, Set<string>>();
+  for (const page of pages) {
+    for (const chunk of extractTextChunks(page.mainText)) {
+      if (!chunkToUrls.has(chunk)) {
+        chunkToUrls.set(chunk, new Set<string>());
+      }
+      chunkToUrls.get(chunk)?.add(page.url);
+    }
+  }
+
+  const duplicateChunkEvidence = Array.from(chunkToUrls.entries())
+    .map(([chunk, urlSet]) => ({ chunk, urls: Array.from(urlSet).sort(compareStrings) }))
+    .filter((entry) => entry.urls.length >= 2)
+    .sort((a, b) => {
+      const sizeDelta = b.urls.length - a.urls.length;
+      if (sizeDelta !== 0) {
+        return sizeDelta;
+      }
+      return compareStrings(a.chunk, b.chunk);
+    })
+    .slice(0, 8);
+
+  if (duplicateChunkEvidence.length > 0) {
+    issues.push(
+      createIssue({
+        id: "duplicate_blocks_across_pages",
+        category: "content_quality",
+        severity: "notice",
+        rank: 3,
+        title: "Repeated content blocks across pages",
+        description: "Similar long text blocks appear on multiple pages.",
+        affectedUrls: uniqueSorted(duplicateChunkEvidence.flatMap((entry) => entry.urls)),
+        evidence: duplicateChunkEvidence.map((entry) => ({
+          type: "content",
+          message: `Shared block across ${entry.urls.length} pages.`,
+          details: {
+            sample_text: entry.chunk.slice(0, 180),
+            urls: entry.urls,
+          },
+        })),
+        recommendation: "Differentiate core paragraphs per page intent to avoid template duplication.",
+      }),
+    );
+  }
+
+  if (normalizedFocusUrl) {
+    const focusPage = pages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === normalizedFocusUrl);
+    if (focusPage && focusPage.inlinksCount < 5) {
+      issues.push(
+        createSinglePageIssue(focusPage, {
+          id: "focus_inlinks_count_low",
+          category: "internal_links",
+          severity: "warning",
+          rank: 7,
+          title: "Focus page has low inlink count",
+          description: "Focus URL has fewer internal inlinks than recommended baseline.",
+          evidence: [{ type: "link", message: `inlinksCount=${focusPage.inlinksCount}, threshold=5.`, url: focusPage.url }],
+          recommendation: "Add contextual internal links to focus URL from relevant high-value pages.",
+        }),
+      );
+    }
+
+    if (focusPage) {
+      const focusStats = inlinkAnchorStatsByTarget.get(normalizedFocusUrl) ?? { total: 0, generic: 0, empty: 0, navLikely: 0 };
+      if (focusStats.total > 0 && (focusStats.generic + focusStats.empty) / focusStats.total > 0.4) {
+        issues.push(
+          createSinglePageIssue(focusPage, {
+            id: "focus_anchor_quality_low",
+            category: "internal_links",
+            severity: "warning",
+            rank: 6,
+            title: "Focus page anchor quality is low",
+            description: "Generic or empty anchors dominate inlinks to focus URL.",
+            evidence: [
+              {
+                type: "link",
+                message: `generic+empty=${focusStats.generic + focusStats.empty}/${focusStats.total}.`,
+                url: focusPage.url,
+              },
+            ],
+            recommendation: "Improve anchor specificity around topic and user intent.",
+          }),
+        );
+      }
+    }
+  }
+
+  const canonicalStatuses = new Map<string, number | null>();
+  for (const page of pages) {
+    if (!page.canonicalUrl) {
+      continue;
+    }
+    if (!canonicalStatuses.has(page.canonicalUrl)) {
+      canonicalStatuses.set(page.canonicalUrl, statusByUrl.get(page.canonicalUrl) ?? null);
+    }
+  }
+
+  for (const [canonicalUrl, cachedStatus] of canonicalStatuses.entries()) {
+    if (cachedStatus !== null && cachedStatus >= 200 && cachedStatus < 300) {
+      continue;
+    }
+    const fallbackStatus = cachedStatus ?? (await fetchStatusWithFallback(canonicalUrl, context.timeoutMs)).status;
+    if (fallbackStatus === null || fallbackStatus < 200 || fallbackStatus >= 300) {
+      const affected = pages.filter((page) => page.canonicalUrl === canonicalUrl);
+      issues.push(
+        createIssue({
+          id: "canonical_to_non_200",
+          category: "indexation_conflicts",
+          severity: "warning",
+          rank: 7,
+          title: "Canonical points to non-200 URL",
+          description: "Canonical target URL is not returning HTTP 200.",
+          affectedUrls: affected.map((page) => page.url),
+          evidence: [
+            {
+              type: "http",
+              message: `Canonical ${canonicalUrl} status=${fallbackStatus ?? "unreachable"}.`,
+              target_url: canonicalUrl,
+              status: fallbackStatus ?? undefined,
+            },
+          ],
+          recommendation: "Update canonical to a stable, indexable 200 URL.",
+        }),
+      );
+    }
+  }
+
+  const sitemapUrlSet = new Set(context.sitemapUrls.map((url) => normalizeUrl(url) ?? url));
+  const sitemapConflicts = pages.filter((page) => {
+    const pageKey = normalizeUrl(page.final_url) ?? page.final_url;
+    const canonicalKey = page.canonicalUrl ? normalizeUrl(page.canonicalUrl) ?? page.canonicalUrl : null;
+    return sitemapUrlSet.has(pageKey) && canonicalKey !== null && canonicalKey !== pageKey;
+  });
+  if (sitemapConflicts.length > 0) {
+    issues.push(
+      createIssue({
+        id: "sitemap_contains_non_canonical",
+        category: "indexation_conflicts",
+        severity: "notice",
+        rank: 4,
+        title: "Sitemap contains non-canonical URLs",
+        description: "Some sitemap URLs canonicalize to a different destination.",
+        affectedUrls: sitemapConflicts.map((page) => page.url),
+        evidence: sitemapConflicts.slice(0, 10).map((page) => ({
+          type: "http",
+          message: `Sitemap URL canonicalizes to ${page.canonicalUrl}.`,
+          url: page.url,
+          target_url: page.canonicalUrl ?? undefined,
+        })),
+        recommendation: "Align sitemap entries with canonical destinations.",
+      }),
+    );
+  }
+
   issues.push(
     ...collectDuplicateFieldIssues({
       pages,
       fieldName: "description",
       valueByPage: (page) => page.meta_description,
-      issueId: "duplicate_description",
-      title: "Duplicate meta descriptions detected",
+      issueId: "meta_description_duplicate",
+      category: "serp",
+      severity: "notice",
+      rank: 4,
+      title: "Duplicate meta descriptions",
       description: "Multiple pages share identical meta description text.",
       recommendation: "Use unique descriptions per page.",
     }),
