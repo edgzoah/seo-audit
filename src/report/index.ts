@@ -1,12 +1,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { buildDiffReport, renderDiffReport, type DiffReport } from "./diff.js";
 import { renderReportJson } from "./json.js";
 import { renderReportLlm } from "./llm.js";
 import { renderReportMarkdown } from "./md.js";
 import { assertValidReport, type Report, type ReportFormat } from "./report-schema.js";
 
 export * from "./report-schema.js";
+export type { DiffReport } from "./diff.js";
 
 export function renderReport(report: Report, format: ReportFormat): string {
   switch (format) {
@@ -29,6 +31,23 @@ export async function loadReportFromRun(runId: string, baseDir: string = process
   const parsed = JSON.parse(raw) as unknown;
   assertValidReport(parsed);
   return parsed;
+}
+
+export async function loadDiffFromRuns(
+  baselineRunId: string,
+  currentRunId: string,
+  baseDir: string = process.cwd(),
+): Promise<DiffReport> {
+  const [baselineReport, currentReport] = await Promise.all([
+    loadReportFromRun(baselineRunId, baseDir),
+    loadReportFromRun(currentRunId, baseDir),
+  ]);
+
+  return buildDiffReport(baselineReport, currentReport);
+}
+
+export function renderDiff(diff: DiffReport, format: ReportFormat): string {
+  return renderDiffReport(diff, format);
 }
 
 export async function writeRunReports(runDir: string, report: Report): Promise<void> {

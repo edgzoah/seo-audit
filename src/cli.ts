@@ -4,7 +4,7 @@ import { Command, InvalidArgumentError } from "commander";
 
 import { runAuditCommand, type AuditCliOptions } from "./audit/run.js";
 import { initWorkspace } from "./config/index.js";
-import { loadReportFromRun, renderReport, type CoverageMode, type ReportFormat } from "./report/index.js";
+import { loadDiffFromRuns, loadReportFromRun, renderDiff, renderReport, type CoverageMode, type ReportFormat } from "./report/index.js";
 
 function parseReportFormat(value: string): ReportFormat {
   if (value === "json" || value === "md" || value === "llm") {
@@ -103,6 +103,18 @@ async function run(): Promise<void> {
     .action(async (runId: string, options: { format: ReportFormat }) => {
       const report = await loadReportFromRun(runId);
       const output = renderReport(report, options.format);
+      process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+    });
+
+  program
+    .command("diff")
+    .description("Generate a diff between baseline and current runs")
+    .argument("<baseline-run-id>", "Baseline run identifier")
+    .argument("<current-run-id>", "Current run identifier")
+    .requiredOption("--format <format>", "Output format: json|md|llm", parseReportFormat)
+    .action(async (baselineRunId: string, currentRunId: string, options: { format: ReportFormat }) => {
+      const diff = await loadDiffFromRuns(baselineRunId, currentRunId);
+      const output = renderDiff(diff, options.format);
       process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
     });
 
