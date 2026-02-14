@@ -352,7 +352,7 @@ export function extractPageData(
 
   const internalTargets = new Set<string>();
   const externalTargets = new Set<string>();
-  const outlinksInternal: PageOutlinkInternal[] = [];
+  const outlinksInternalMap = new Map<string, PageOutlinkInternal>();
   const outlinksExternal: PageOutlinkExternal[] = [];
   const finalHost = new URL(finalUrl).host;
 
@@ -373,12 +373,20 @@ export function extractPageData(
 
     if (targetHost === finalHost) {
       internalTargets.add(resolved);
-      outlinksInternal.push({
-        targetUrl: resolved,
-        anchorText,
-        rel,
-        isNavLikely: isLikelyNavLink($, element),
-      });
+      const isNavLikely = isLikelyNavLink($, element);
+      const dedupeKey = `${resolved}\u0000${anchorText}\u0000${rel}\u0000${isNavLikely ? "1" : "0"}`;
+      const existing = outlinksInternalMap.get(dedupeKey);
+      if (existing) {
+        existing.occurrences += 1;
+      } else {
+        outlinksInternalMap.set(dedupeKey, {
+          targetUrl: resolved,
+          anchorText,
+          rel,
+          isNavLikely,
+          occurrences: 1,
+        });
+      }
       return;
     }
 
@@ -452,7 +460,7 @@ export function extractPageData(
       footerText,
       schemaParsed: schema.jsonLdParsed,
     }),
-    outlinksInternal: outlinksInternal.sort((a, b) => {
+    outlinksInternal: Array.from(outlinksInternalMap.values()).sort((a, b) => {
       const targetDelta = compareStrings(a.targetUrl, b.targetUrl);
       if (targetDelta !== 0) {
         return targetDelta;
@@ -461,7 +469,15 @@ export function extractPageData(
       if (anchorDelta !== 0) {
         return anchorDelta;
       }
-      return Number(a.isNavLikely) - Number(b.isNavLikely);
+      const navDelta = Number(a.isNavLikely) - Number(b.isNavLikely);
+      if (navDelta !== 0) {
+        return navDelta;
+      }
+      const relDelta = compareStrings(a.rel, b.rel);
+      if (relDelta !== 0) {
+        return relDelta;
+      }
+      return a.occurrences - b.occurrences;
     }),
     outlinksExternal: outlinksExternal.sort((a, b) => {
       const targetDelta = compareStrings(a.targetUrl, b.targetUrl);

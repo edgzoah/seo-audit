@@ -78,6 +78,13 @@ Each run writes to `runs/<run-id>/`:
 - `diff.json` and `diff.llm.txt` (when `--baseline` is provided)
 - `llm.*` files (when `--llm` is enabled)
 
+### Crawl Identity and Link Deduplication
+
+- In `surface` mode, crawl identity keeps only pagination query params: `page`, `p`, `paged`.
+- Non-pagination query params (for example UTM tracking params) are ignored for surface deduplication.
+- Internal outlinks in `pages.json` are deduplicated per `(targetUrl, anchorText, rel, isNavLikely)` and include `occurrences`.
+- Internal inlink graph metrics count unique source->target relations (not repeated menu/footer duplicates).
+
 ## Baseline / Regression
 
 `baseline` is your reference run. Use it to detect regressions (score drop, new issues, worsened issues):

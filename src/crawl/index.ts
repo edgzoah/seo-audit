@@ -53,6 +53,38 @@ function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
 }
 
+const PAGINATION_QUERY_PARAMS = new Set(["page", "p", "paged"]);
+
+export function isPaginationParam(name: string): boolean {
+  return PAGINATION_QUERY_PARAMS.has(name.toLowerCase());
+}
+
+export function canonicalizeForCrawlIdentity(url: string): string {
+  const parsed = new URL(url);
+  const selectedEntries: Array<[string, string]> = [];
+  for (const [name, value] of parsed.searchParams.entries()) {
+    if (isPaginationParam(name)) {
+      selectedEntries.push([name.toLowerCase(), value]);
+    }
+  }
+
+  selectedEntries.sort((a, b) => {
+    const nameDelta = compareStrings(a[0], b[0]);
+    if (nameDelta !== 0) {
+      return nameDelta;
+    }
+    return compareStrings(a[1], b[1]);
+  });
+
+  const normalized = new URL(parsed.toString());
+  normalized.hash = "";
+  normalized.search = "";
+  for (const [name, value] of selectedEntries) {
+    normalized.searchParams.append(name, value);
+  }
+  return normalized.toString();
+}
+
 function normalizeUrl(raw: string, baseUrl?: string): string | null {
   try {
     return baseUrl ? new URL(raw, baseUrl).toString() : new URL(raw).toString();
@@ -335,25 +367,6 @@ export async function discoverSeeds(inputs: AuditInputs): Promise<SeedDiscoveryR
   };
 }
 
-function patternize(url: string): string {
-  const parsed = new URL(url);
-  const rawSegments = parsed.pathname.split("/").filter((segment) => segment.length > 0);
-  const normalizedSegments = rawSegments.map((segment) => {
-    if (/^\d+$/.test(segment)) {
-      return "{n}";
-    }
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) {
-      return "{id}";
-    }
-    if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(segment) && segment.length >= 12) {
-      return "{slug}";
-    }
-    return segment;
-  });
-
-  return `/${normalizedSegments.join("/")}`;
-}
-
 function headersToRecord(headers: Headers): Record<string, string> {
   const entries = Array.from(headers.entries()).sort((a, b) => compareStrings(a[0], b[0]));
   const result: Record<string, string> = {};
@@ -448,7 +461,7 @@ export async function crawlSite(
   const pages: CrawledPage[] = [];
   const events: CrawlEvent[] = [];
   const allowedHosts = resolveAllowedHosts(inputs);
-  const surfacePatterns = new Set<string>();
+  const surfaceIdentities = new Set<string>();
   const forcedNeighborhoodUrls = new Set<string>();
   const focusNeighborhoodCap = focusUrl ? 25 : 0;
   let focusNeighborhoodCount = 0;
@@ -471,11 +484,11 @@ export async function crawlSite(
 
     const isForcedNeighborhood = forcedNeighborhoodUrls.has(current.url) || (focusUrl !== null && current.url === focusUrl);
     if (inputs.coverage === "surface" && !isForcedNeighborhood) {
-      const pattern = patternize(current.url);
-      if (surfacePatterns.has(pattern)) {
+      const identity = canonicalizeForCrawlIdentity(current.url);
+      if (surfaceIdentities.has(identity)) {
         continue;
       }
-      surfacePatterns.add(pattern);
+      surfaceIdentities.add(identity);
     }
 
     const startedAt = Date.now();

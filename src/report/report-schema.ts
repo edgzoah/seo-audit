@@ -94,6 +94,7 @@ export interface PageOutlinkInternal {
   anchorText: string;
   rel: string;
   isNavLikely: boolean;
+  occurrences: number;
 }
 
 export interface PageOutlinkExternal {

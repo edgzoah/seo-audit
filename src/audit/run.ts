@@ -249,7 +249,7 @@ function isHomePage(url: string): boolean {
   }
 }
 
-interface InternalLinkGraphResult {
+export interface InternalLinkGraphResult {
   pages: PageExtract[];
   focusInlinkUrls: Set<string>;
   focusInlinksCount: number;
@@ -269,11 +269,9 @@ interface InternalLinkGraphResult {
   };
 }
 
-function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): InternalLinkGraphResult {
-  const pageByKey = new Map<string, PageExtract>();
+export function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): InternalLinkGraphResult {
   const aliasToKey = new Map<string, string>();
   const inlinksByTarget = new Map<string, number>();
-  const navLikelyByTarget = new Map<string, number>();
   const anchorsByTarget = new Map<string, Map<string, number>>();
   const inlinkSourceCountsToFocus = new Map<string, number>();
   const focusAnchorHistogram = new Map<string, number>();
@@ -289,7 +287,6 @@ function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): 
 
   for (const page of pages) {
     const key = normalizeUrl(page.final_url) ?? page.final_url;
-    pageByKey.set(key, page);
     aliasToKey.set(normalizeUrl(page.url) ?? page.url, key);
     aliasToKey.set(key, key);
   }
@@ -298,6 +295,8 @@ function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): 
 
   for (const page of pages) {
     const sourceKey = normalizeUrl(page.final_url) ?? page.final_url;
+    const sourceTargetSeen = new Set<string>();
+
     for (const link of page.outlinksInternal) {
       const normalizedTarget = normalizeUrl(link.targetUrl) ?? link.targetUrl;
       const targetKey = aliasToKey.get(normalizedTarget) ?? normalizedTarget;
@@ -326,15 +325,19 @@ function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): 
         targetHistogram.set(normalizedAnchor, (targetHistogram.get(normalizedAnchor) ?? 0) + 1);
       }
 
-      inlinksByTarget.set(targetKey, (inlinksByTarget.get(targetKey) ?? 0) + 1);
-      if (link.isNavLikely) {
-        navLikelyByTarget.set(targetKey, (navLikelyByTarget.get(targetKey) ?? 0) + 1);
+      const sourceTargetKey = `${sourceKey}\u0000${targetKey}`;
+      const isFirstSourceTargetLink = !sourceTargetSeen.has(sourceTargetKey);
+      if (isFirstSourceTargetLink) {
+        inlinksByTarget.set(targetKey, (inlinksByTarget.get(targetKey) ?? 0) + 1);
+        sourceTargetSeen.add(sourceTargetKey);
       }
 
       globalAnchorHistogram.set(normalizedAnchor, (globalAnchorHistogram.get(normalizedAnchor) ?? 0) + 1);
 
       if (normalizedFocusUrl && targetKey === normalizedFocusUrl) {
-        inlinkSourceCountsToFocus.set(sourceKey, (inlinkSourceCountsToFocus.get(sourceKey) ?? 0) + 1);
+        if (isFirstSourceTargetLink) {
+          inlinkSourceCountsToFocus.set(sourceKey, (inlinkSourceCountsToFocus.get(sourceKey) ?? 0) + 1);
+        }
         focusAnchorHistogram.set(normalizedAnchor, (focusAnchorHistogram.get(normalizedAnchor) ?? 0) + 1);
         focusTotalAnchors += 1;
         if (isGenericAnchor) {
