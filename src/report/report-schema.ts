@@ -308,6 +308,7 @@ export interface Report {
   inputs: AuditInputs;
   summary: Summary;
   issues: Issue[];
+  internal_link_plan?: InternalLinkPlanItem[];
   proposed_fixes?: ProposedFix[];
   proposed_packs?: LlmProposalPacks;
   prioritized_actions?: Action[];

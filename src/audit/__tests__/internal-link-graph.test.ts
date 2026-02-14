@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { buildInternalLinkGraph } from "../run.js";
+import { buildDeterministicInternalLinkPlan, buildInternalLinkGraph } from "../run.js";
 import type { PageExtract, PageOutlinkInternal } from "../../report/report-schema.js";
 
 function makePage(input: { url: string; outlinksInternal?: PageOutlinkInternal[] }): PageExtract {
@@ -140,4 +140,85 @@ test("buildInternalLinkGraph internal summary snapshot remains stable after dedu
       { anchor: "cennik", count: 1 },
     ],
   });
+});
+
+test("buildInternalLinkGraph does not inflate summary percentages from occurrences", () => {
+  const target = "https://example.com/cennik";
+  const pages = [
+    makePage({
+      url: "https://example.com/a",
+      outlinksInternal: [{ targetUrl: target, anchorText: "Cennik", rel: "", isNavLikely: true, occurrences: 40 }],
+    }),
+    makePage({
+      url: "https://example.com/b",
+      outlinksInternal: [{ targetUrl: target, anchorText: "Oferta", rel: "", isNavLikely: false, occurrences: 1 }],
+    }),
+    makePage({ url: target }),
+  ];
+
+  const graph = buildInternalLinkGraph(pages, target);
+  assert.equal(graph.internalLinksSummary.navLikelyInlinksPercent, 50);
+  assert.deepEqual(graph.internalLinksSummary.topAnchors, [
+    { anchor: "cennik", count: 1 },
+    { anchor: "oferta", count: 1 },
+  ]);
+});
+
+test("buildInternalLinkGraph sorts top inlink sources deterministically by count then URL", () => {
+  const target = "https://example.com/cennik";
+  const pages = [
+    makePage({
+      url: "https://example.com/z-source",
+      outlinksInternal: [{ targetUrl: target, anchorText: "Cennik", rel: "", isNavLikely: false, occurrences: 1 }],
+    }),
+    makePage({
+      url: "https://example.com/a-source",
+      outlinksInternal: [{ targetUrl: target, anchorText: "Cennik", rel: "", isNavLikely: false, occurrences: 1 }],
+    }),
+    makePage({ url: target }),
+  ];
+
+  const graph = buildInternalLinkGraph(pages, target);
+  assert.deepEqual(graph.topInlinkSourcesToFocus, ["https://example.com/a-source", "https://example.com/z-source"]);
+});
+
+test("buildDeterministicInternalLinkPlan suggests source pages that do not yet link to focus", () => {
+  const focus = "https://example.com/psychoterapia/terapia-par-warszawa";
+  const pages = [
+    makePage({
+      url: focus,
+    }),
+    makePage({
+      url: "https://example.com/o-nas/czytelnia/relacje",
+      outlinksInternal: [],
+    }),
+    makePage({
+      url: "https://example.com/psychoterapia/terapia-doroslych-warszawa",
+      outlinksInternal: [],
+    }),
+    makePage({
+      url: "https://example.com/kontakt",
+      outlinksInternal: [{ targetUrl: focus, anchorText: "terapia par warszawa", rel: "", isNavLikely: true, occurrences: 1 }],
+    }),
+  ].map((page) => {
+    if (page.final_url.endsWith("/relacje")) {
+      return { ...page, titleText: "Jak relacje wpływają na terapię par", mainText: "terapia par warszawa relacje konflikt komunikacja", wordCountMain: 500 };
+    }
+    if (page.final_url.endsWith("/terapia-doroslych-warszawa")) {
+      return { ...page, titleText: "Psychoterapia dorosłych w Warszawie", mainText: "psychoterapia warszawa terapia par wsparcie", wordCountMain: 450 };
+    }
+    return page;
+  });
+
+  const plan = buildDeterministicInternalLinkPlan({
+    pages,
+    focusUrl: focus,
+    focusKeyword: "terapia par warszawa",
+    maxItems: 5,
+  });
+
+  assert.ok(plan.length >= 1);
+  assert.ok(plan.every((item) => item.sourceUrl !== focus));
+  assert.ok(plan.every((item) => item.sourceUrl !== "https://example.com/kontakt"));
+  assert.ok(plan.some((item) => item.suggestedAnchor.toLowerCase().includes("terapia par warszawa")));
 });

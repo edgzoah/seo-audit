@@ -587,6 +587,7 @@ async function getRedirectChainLength(url: string, timeoutMs: number, maxHops = 
 export async function runRules(context: RuleContext): Promise<Issue[]> {
   const issues: Issue[] = [];
   const pages = context.pages;
+  const auditablePages = pages.filter((page) => page.status >= 200 && page.status < 300);
   const statusByUrl = buildStatusMap(pages);
   const resolveStatus = createSharedStatusResolver(context.timeoutMs);
   const genericAnchors = new Set((context.genericAnchors ?? Array.from(DEFAULT_GENERIC_ANCHORS)).map((item) => normalizeForCompare(item)));
@@ -612,6 +613,29 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
       empty: 0,
       navLikely: 0,
     };
+
+    if (!isOnPageAuditable) {
+      issues.push(
+        createSinglePageIssue(page, {
+          id: "page_not_available",
+          category: "indexability",
+          severity: "warning",
+          rank: 8,
+          title: "Page is not available for indexing",
+          description: "URL returned a non-2xx status, so on-page SEO checks were skipped.",
+          evidence: [
+            {
+              type: "http",
+              message: `Status code is ${page.status}.`,
+              url: page.url,
+            },
+          ],
+          recommendation:
+            "If this URL should rank, restore it with HTTP 200. If removed intentionally, update internal links/sitemap/canonicals to point to active pages.",
+        }),
+      );
+      continue;
+    }
 
     if (isOnPageAuditable) {
       if (context.includeSerp && h1Text.length > 0 && page.titleText.length > 0 && titleH1Similarity < 0.25) {
@@ -1283,7 +1307,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
 
   issues.push(
     ...collectDuplicateFieldIssues({
-      pages,
+      pages: auditablePages,
       fieldName: "title",
       valueByPage: (page) => page.title,
       issueId: "duplicate_title",
@@ -1297,7 +1321,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   );
 
   const chunkToUrls = new Map<string, Set<string>>();
-  for (const page of pages) {
+  for (const page of auditablePages) {
     for (const chunk of extractTextChunks(page.mainText)) {
       if (!chunkToUrls.has(chunk)) {
         chunkToUrls.set(chunk, new Set<string>());
@@ -1342,7 +1366,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   }
 
   if (normalizedFocusUrl) {
-    const focusPage = pages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === normalizedFocusUrl);
+    const focusPage = auditablePages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === normalizedFocusUrl);
     if (focusPage && focusPage.inlinksCount < context.focusInlinksThreshold) {
       issues.push(
         createSinglePageIssue(focusPage, {
@@ -1390,7 +1414,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   }
 
   const canonicalStatuses = new Map<string, number | null>();
-  for (const page of pages) {
+  for (const page of auditablePages) {
     if (!page.canonicalUrl) {
       continue;
     }
@@ -1414,7 +1438,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
     },
   );
   for (const item of canonicalChecks.filter((entry): entry is { canonicalUrl: string; fallbackStatus: number | null } => Boolean(entry))) {
-    const affected = pages.filter((page) => page.canonicalUrl === item.canonicalUrl);
+    const affected = auditablePages.filter((page) => page.canonicalUrl === item.canonicalUrl);
     issues.push(
       createIssue({
         id: "canonical_to_non_200",
@@ -1438,7 +1462,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   }
 
   const sitemapUrlSet = new Set(context.sitemapUrls.map((url) => normalizeUrl(url) ?? url));
-  const sitemapConflicts = pages.filter((page) => {
+  const sitemapConflicts = auditablePages.filter((page) => {
     const pageKey = normalizeUrl(page.final_url) ?? page.final_url;
     const canonicalKey = page.canonicalUrl ? normalizeUrl(page.canonicalUrl) ?? page.canonicalUrl : null;
     return sitemapUrlSet.has(pageKey) && canonicalKey !== null && canonicalKey !== pageKey;
@@ -1467,7 +1491,7 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
   if (context.includeSerp) {
     issues.push(
       ...collectDuplicateFieldIssues({
-        pages,
+        pages: auditablePages,
         fieldName: "description",
         valueByPage: (page) => page.meta_description,
         issueId: "meta_description_duplicate",

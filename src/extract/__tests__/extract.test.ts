@@ -76,3 +76,43 @@ test("extractPageData output order is stable for outlinksInternal records", () =
     ["https://example.com/a|A1", "https://example.com/a|A2", "https://example.com/b|B"],
   );
 });
+
+test("extractPageData keeps internal target counts unique while preserving occurrences", () => {
+  const html = `
+    <html>
+      <body>
+        <a href="/a">A</a>
+        <a href="/a">A</a>
+        <a href="/a?utm=1">A tracking</a>
+        <a href="/b">B</a>
+        <a href="https://outside.example.com/x">X</a>
+      </body>
+    </html>
+  `;
+
+  const page = extractPageData(html, "https://example.com/", "https://example.com/", 200, {});
+  assert.equal(page.links.internal_count, 3);
+  assert.equal(page.links.external_count, 1);
+  assert.equal(page.outlinksInternal.length, 3);
+
+  const exactA = page.outlinksInternal.find((item) => item.targetUrl === "https://example.com/a" && item.anchorText === "A");
+  assert.ok(exactA);
+  assert.equal(exactA.occurrences, 2);
+});
+
+test("extractPageData ignores anchor fragments and javascript pseudo-links", () => {
+  const html = `
+    <html>
+      <body>
+        <a href="#section">Sekcja</a>
+        <a href="javascript:void(0)">JS</a>
+        <a href="/real">Real</a>
+      </body>
+    </html>
+  `;
+
+  const page = extractPageData(html, "https://example.com/", "https://example.com/", 200, {});
+  assert.equal(page.outlinksInternal.length, 1);
+  assert.equal(page.outlinksInternal[0].targetUrl, "https://example.com/real");
+  assert.equal(page.outlinksInternal[0].occurrences, 1);
+});

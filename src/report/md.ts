@@ -30,6 +30,9 @@ export function renderReportMarkdown(report: Report): string {
   const focusPage = findFocusPage(report);
   const focusSummary = report.summary.focus;
   const actions = groupNextActions(report);
+  const internalLinkPlan = report.proposed_packs?.internal_link_plan?.length
+    ? report.proposed_packs.internal_link_plan
+    : (report.internal_link_plan ?? []);
 
   lines.push("# SEO Audit Report");
   lines.push("");
@@ -93,6 +96,19 @@ export function renderReportMarkdown(report: Report): string {
         .map((item) => `${item.anchor || "(empty)"} (${item.count})`)
         .join(", ") || "(none)"}`,
     );
+  }
+  lines.push("");
+
+  lines.push("## Internal Link Plan");
+  lines.push("");
+  if (internalLinkPlan.length === 0) {
+    lines.push("- No internal link recommendations generated.");
+  } else {
+    for (const item of internalLinkPlan) {
+      lines.push(`- Source: ${item.sourceUrl}`);
+      lines.push(`  - Anchor: ${item.suggestedAnchor}`);
+      lines.push(`  - Context: ${item.suggestedSentenceContext}`);
+    }
   }
   lines.push("");
 

@@ -1,4 +1,4 @@
-# SEO Audit CLI
+# SEO Audit (Next.js + CLI Backend)
 
 Local CLI tool for deterministic SEO audits (crawl + extract + rule engine + scoring), with optional LLM proposals via Codex CLI or API providers (GPT/OpenAI, Gemini, Claude).
 
@@ -15,11 +15,37 @@ npm install
 npm run build
 ```
 
+## Next.js App (current default)
+
+Run web app:
+
+```bash
+npm run dev
+```
+
+Open:
+
+- `http://localhost:3000/` - list of runs from `runs/`
+- `http://localhost:3000/runs/<run-id>` - run details
+- `http://localhost:3000/api/runs` - API list
+- `http://localhost:3000/api/runs/<run-id>` - API report JSON
+
+Current setup keeps backend/domain logic in `src/` and uses Next.js `app/` as UI/API layer.
+
+## CLI (legacy/compatible mode)
+
+Build CLI TypeScript output:
+
+```bash
+npm run build:cli
+```
+
 ## Quick Start
 
 Initialize config/docs (once):
 
 ```bash
+npm run build:cli
 node dist/cli.js init
 ```
 

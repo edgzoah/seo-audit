@@ -10,6 +10,7 @@ import type {
   Action,
   AuditInputs,
   CoverageMode,
+  InternalLinkPlanItem,
   Issue,
   LighthouseMetrics,
   PageExtract,
@@ -249,6 +250,35 @@ function isHomePage(url: string): boolean {
   }
 }
 
+function normalizeForCompare(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{L}\p{N}\s/-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(value: string): string[] {
+  return normalizeForCompare(value)
+    .split(/[\/\s-]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function uniquePreserveOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
+}
+
 export interface InternalLinkGraphResult {
   pages: PageExtract[];
   focusInlinkUrls: Set<string>;
@@ -267,6 +297,101 @@ export interface InternalLinkGraphResult {
     percentEmptyAnchors: number;
     topAnchors: Array<{ anchor: string; count: number }>;
   };
+}
+
+export function buildDeterministicInternalLinkPlan(input: {
+  pages: PageExtract[];
+  focusUrl: string | null;
+  focusKeyword: string | null;
+  maxItems?: number;
+}): InternalLinkPlanItem[] {
+  const normalizedFocusUrl = input.focusUrl ? normalizeUrl(input.focusUrl) ?? input.focusUrl : null;
+  if (!normalizedFocusUrl) {
+    return [];
+  }
+
+  const focusPage = input.pages.find((page) => (normalizeUrl(page.final_url) ?? page.final_url) === normalizedFocusUrl);
+  const focusUrlPath = (() => {
+    try {
+      return new URL(normalizedFocusUrl).pathname;
+    } catch {
+      return "";
+    }
+  })();
+
+  const focusTokens = uniquePreserveOrder([
+    ...(input.focusKeyword ? tokenize(input.focusKeyword) : []),
+    ...tokenize(focusPage?.titleText ?? ""),
+    ...tokenize(focusPage?.headingTextConcat ?? ""),
+    ...tokenize(focusUrlPath),
+  ]);
+
+  const existingSources = new Set<string>();
+  for (const page of input.pages) {
+    const sourceUrl = normalizeUrl(page.final_url) ?? page.final_url;
+    for (const outlink of page.outlinksInternal) {
+      const target = normalizeUrl(outlink.targetUrl) ?? outlink.targetUrl;
+      if (target === normalizedFocusUrl) {
+        existingSources.add(sourceUrl);
+        break;
+      }
+    }
+  }
+
+  const anchorCandidates = uniquePreserveOrder(
+    [
+      input.focusKeyword?.trim() ?? "",
+      (focusPage?.headings_outline.find((item) => item.level === 1)?.text ?? "").trim(),
+      (focusPage?.titleText ?? "").split("|")[0]?.trim() ?? "",
+    ].filter((value) => value.length > 0),
+  );
+  const fallbackAnchor = anchorCandidates[0] ?? "powiązana oferta";
+
+  const candidateScored = input.pages
+    .filter((page) => {
+      const sourceUrl = normalizeUrl(page.final_url) ?? page.final_url;
+      if (sourceUrl === normalizedFocusUrl) {
+        return false;
+      }
+      if (existingSources.has(sourceUrl)) {
+        return false;
+      }
+      return page.status >= 200 && page.status < 300;
+    })
+    .map((page) => {
+      const sourceUrl = normalizeUrl(page.final_url) ?? page.final_url;
+      let pathname = "";
+      try {
+        pathname = new URL(sourceUrl).pathname;
+      } catch {
+        pathname = sourceUrl;
+      }
+      const haystack = normalizeForCompare(`${page.titleText} ${page.headingTextConcat} ${page.mainText.slice(0, 1800)} ${pathname}`);
+      const overlap = focusTokens.filter((token) => haystack.includes(token)).length;
+      const contentScore = Math.min(3, page.wordCountMain / 250);
+      const inlinkBoost = page.inlinksCount <= 1 ? 1.0 : 0;
+      const score = overlap * 4 + contentScore + inlinkBoost;
+      return { page, score, overlap };
+    })
+    .filter((entry) => entry.overlap > 0)
+    .sort((a, b) => {
+      const scoreDelta = b.score - a.score;
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+      return a.page.final_url.localeCompare(b.page.final_url, "en");
+    })
+    .slice(0, Math.max(1, input.maxItems ?? 8));
+
+  return candidateScored.map((entry, index) => {
+    const sourceTitle = entry.page.titleText || entry.page.title || "tej stronie";
+    const suggestedAnchor = anchorCandidates[index % Math.max(1, anchorCandidates.length)] ?? fallbackAnchor;
+    return {
+      sourceUrl: entry.page.final_url,
+      suggestedAnchor,
+      suggestedSentenceContext: `W sekcji dotyczącej ${sourceTitle} dodaj naturalne odesłanie do ${suggestedAnchor}.`,
+    };
+  });
 }
 
 export function buildInternalLinkGraph(pages: PageExtract[], focusUrl: string | null): InternalLinkGraphResult {
@@ -438,6 +563,107 @@ function applyFocusTags(input: { issues: Issue[]; focusUrl: string | null; inlin
   });
 }
 
+function issuePriorityWeight(issue: Issue): number {
+  const severityScore = issue.severity === "error" ? 3 : issue.severity === "warning" ? 2 : 1;
+  return severityScore * 100 + issue.rank;
+}
+
+function evidenceKey(issue: Issue, evidence: Issue["evidence"][number]): string {
+  const details = evidence.details ? JSON.stringify(evidence.details) : "";
+  return [
+    issue.id,
+    evidence.type,
+    evidence.message,
+    evidence.url ?? "",
+    evidence.source_url ?? "",
+    evidence.target_url ?? "",
+    evidence.anchor_text ?? "",
+    evidence.status === undefined ? "" : String(evidence.status),
+    details,
+  ].join("\u0001");
+}
+
+export function consolidateIssues(issues: Issue[]): Issue[] {
+  const grouped = new Map<string, Issue>();
+  const affectedByKey = new Map<string, Set<string>>();
+  const tagsByKey = new Map<string, Set<string>>();
+  const evidenceByKey = new Map<string, Map<string, Issue["evidence"][number]>>();
+
+  for (const issue of issues) {
+    const key = [
+      issue.id,
+      issue.category,
+      issue.severity,
+      issue.title,
+      issue.description,
+      issue.recommendation,
+    ].join("\u0001");
+
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...issue,
+        affected_urls: [],
+        evidence: [],
+        tags: [],
+      });
+      affectedByKey.set(key, new Set<string>());
+      tagsByKey.set(key, new Set<string>());
+      evidenceByKey.set(key, new Map<string, Issue["evidence"][number]>());
+    } else if (issuePriorityWeight(issue) > issuePriorityWeight(existing)) {
+      existing.rank = issue.rank;
+    }
+
+    const affected = affectedByKey.get(key);
+    if (affected) {
+      for (const url of issue.affected_urls) {
+        affected.add(url);
+      }
+    }
+
+    const tags = tagsByKey.get(key);
+    if (tags) {
+      for (const tag of issue.tags) {
+        tags.add(tag);
+      }
+    }
+
+    const evidenceMap = evidenceByKey.get(key);
+    if (evidenceMap) {
+      for (const item of issue.evidence) {
+        evidenceMap.set(evidenceKey(issue, item), item);
+      }
+    }
+  }
+
+  return Array.from(grouped.entries())
+    .map(([key, issue]) => {
+      const affected = Array.from(affectedByKey.get(key) ?? new Set<string>()).sort((a, b) => a.localeCompare(b, "en"));
+      const tags = Array.from(tagsByKey.get(key) ?? new Set<string>()).sort((a, b) => a.localeCompare(b, "en"));
+      const evidence = Array.from(evidenceByKey.get(key)?.values() ?? [])
+        .sort((a, b) => a.message.localeCompare(b.message, "en"))
+        .slice(0, 30);
+
+      return {
+        ...issue,
+        affected_urls: affected,
+        tags,
+        evidence,
+      };
+    })
+    .sort((a, b) => {
+      const priorityDelta = issuePriorityWeight(b) - issuePriorityWeight(a);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      const affectedDelta = b.affected_urls.length - a.affected_urls.length;
+      if (affectedDelta !== 0) {
+        return affectedDelta;
+      }
+      return a.id.localeCompare(b.id, "en");
+    });
+}
+
 function getIssueWeight(issue: Issue): number {
   if (issue.tags.includes("focus")) {
     return 2.0;
@@ -495,11 +721,13 @@ function categoryToScoreBucket(category: string): "seo" | "technical" | "content
   return "technical";
 }
 
-function issueDeduction(issue: Issue): number {
+function issueDeduction(issue: Issue, pagesCrawled = 1): number {
   const affectedCount = Math.max(1, issue.affected_urls.length);
+  const normalizedPages = Math.max(1, pagesCrawled);
+  const affectedRatio = Math.min(1, affectedCount / normalizedPages);
   const severity = severityWeight(issue.severity);
   const rank = Math.max(1, Math.min(10, issue.rank)) / 10;
-  const volume = Math.log(1 + affectedCount);
+  const volume = 0.6 + affectedRatio * 1.4;
   const multiplier = getIssueWeight(issue);
   const issueSpecificWeight =
     issue.id === "title_length_out_of_range" || issue.id === "description_length_out_of_range"
@@ -511,11 +739,11 @@ function issueDeduction(issue: Issue): number {
           : issue.id === "thin_content"
             ? 1.2
             : 1.0;
-  const scale = 8;
+  const scale = 6;
   return severity * rank * volume * multiplier * issueSpecificWeight * scale;
 }
 
-function buildCategoryScores(issues: Issue[], performanceScore: number | null): Record<string, number> {
+function buildCategoryScores(issues: Issue[], performanceScore: number | null, pagesCrawled: number): Record<string, number> {
   const deductions: Record<string, number> = {
     seo: 0,
     technical: 0,
@@ -526,7 +754,7 @@ function buildCategoryScores(issues: Issue[], performanceScore: number | null): 
 
   for (const issue of issues) {
     const bucket = categoryToScoreBucket(issue.category);
-    deductions[bucket] += issueDeduction(issue);
+    deductions[bucket] += issueDeduction(issue, Math.max(1, pagesCrawled));
   }
 
   return {
@@ -553,12 +781,15 @@ function buildFocusSummary(input: {
 
   const neighborhood = new Set<string>([input.focusUrl, ...Array.from(input.inlinkUrls)]);
   const focusNeighborhoodIssues = input.issues.filter((issue) => issue.affected_urls.some((url) => neighborhood.has(url)));
-  const focusDeduction = focusNeighborhoodIssues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
+  const focusDeduction = focusNeighborhoodIssues.reduce(
+    (sum, issue) => sum + issueDeduction(issue, Math.max(1, neighborhood.size)),
+    0,
+  );
   const focusScore = clampScore(100 - focusDeduction);
 
   const focusTopIssues = [...focusNeighborhoodIssues]
     .sort((a, b) => {
-      const delta = issueDeduction(b) - issueDeduction(a);
+      const delta = issueDeduction(b, Math.max(1, neighborhood.size)) - issueDeduction(a, Math.max(1, neighborhood.size));
       if (delta !== 0) {
         return delta;
       }
@@ -758,6 +989,7 @@ function buildCanonicalReport(input: {
   focusInlinksThreshold: number;
   performanceFocus: PerformanceSnapshot;
   performanceHome: PerformanceSnapshot;
+  internalLinkPlan: InternalLinkPlanItem[];
 }): Report {
   const errors = input.issues.filter((issue) => issue.severity === "error").length;
   const warnings = input.issues.filter((issue) => issue.severity === "warning").length;
@@ -770,8 +1002,8 @@ function buildCanonicalReport(input: {
     performanceScoreCandidates.length > 0
       ? performanceScoreCandidates.reduce((sum, value) => sum + value, 0) / performanceScoreCandidates.length
       : null;
-  const scoreByCategory = buildCategoryScores(input.issues, performanceScore);
-  const totalDeduction = input.issues.reduce((sum, issue) => sum + issueDeduction(issue), 0);
+  const scoreByCategory = buildCategoryScores(input.issues, performanceScore, input.pages.length);
+  const totalDeduction = input.issues.reduce((sum, issue) => sum + issueDeduction(issue, Math.max(1, input.pages.length)), 0);
   const scoreTotal = clampScore(100 - totalDeduction);
   const focusSummary = buildFocusSummary({
     issues: input.issues,
@@ -809,6 +1041,7 @@ function buildCanonicalReport(input: {
       performanceHome: input.performanceHome,
     },
     issues: input.issues,
+    internal_link_plan: input.internalLinkPlan,
     pages: input.pages.map((page) => ({
       url: page.url,
       final_url: page.final_url,
@@ -905,7 +1138,8 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   });
   const focusUrl = normalizedFocusUrl;
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
-  const issues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
+  const taggedIssues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
+  const issues = consolidateIssues(taggedIssues);
 
   emitProgress(options, 78, "report", "Writing artifacts");
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(graphEnrichedPages, null, 2)}\n`, "utf-8");
@@ -928,6 +1162,12 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
     focusInlinksThreshold: options.focusInlinksThreshold ?? 5,
     performanceFocus: toPerformanceSnapshot(focusLighthouse),
     performanceHome: toPerformanceSnapshot(homeLighthouse),
+    internalLinkPlan: buildDeterministicInternalLinkPlan({
+      pages: graphEnrichedPages,
+      focusUrl,
+      focusKeyword: inputs.brief.focus.primary_keyword,
+      maxItems: 10,
+    }),
   });
 
   if (inputs.llm_enabled) {

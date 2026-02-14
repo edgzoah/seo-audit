@@ -1,0 +1,218 @@
+SCOPE
+Expand the current audit so it covers non-technical ranking levers and produces higher-quality LLM proposals (titles/desc/outline/internal linking/entity/local/EEAT). Do NOT change docs/*.md in this patch. Implement code + rules + extraction + report fields.
+
+PRIMARY GAPS TO FIX
+1) SERP/intent layer missing (on-page content relevance and snippet quality beyond “length”).
+2) Entity/EEAT/local layer missing (trust signals and structured data quality).
+3) Internal linking under focus page not measured (inlinks/anchors/orphans).
+4) Performance is “100” because no real measurement exists (add Lighthouse for focus+home minimum).
+5) LLM proposals are shallow because evidence/context is too weak and rules are too narrow.
+
+REFERENCE FACTS (USE AS GUARDRAILS)
+- Google can rewrite title links using multiple sources (title, headings, anchors, on-page text). Treat title “length” as heuristic, prioritize semantic match title↔H1 and clarity. :contentReference[oaicite:0]{index=0}
+- Structured data must follow general guidelines and be consistent; violations can make it ineligible for rich results. :contentReference[oaicite:1]{index=1}
+- Robots directives can be set via meta robots and X-Robots-Tag header; they can conflict and both matter for indexation. :contentReference[oaicite:2]{index=2}
+- Core Web Vitals (LCP, INP, CLS) are recommended for Search success and reflect real UX. :contentReference[oaicite:3]{index=3}
+
+IMPLEMENTATION PLAN (PATCH BLOCKS)
+
+BLOCK 1 — EXTRACTION UPGRADES (EVIDENCE QUALITY)
+Add to PageExtract:
+A) SERP/intent signals
+- mainText: extracted main content text (strip nav/footer; heuristic selectors: main/article/#content)
+- wordCountMain: number
+- firstViewportText: first ~300 chars of main text
+- headingTextConcat: joined H1-H3 text for similarity checks
+- brandSignals: detected brand name candidates (from title, footer, org schema, logo alt)
+B) Internal linking graph
+- outlinksInternal: [{targetUrl, anchorText, rel, isNavLikely}]
+- outlinksExternal: [{targetUrl, anchorText, rel}]
+- inlinksCount (computed post-crawl)
+- inlinksAnchorsTop: [{anchor, count}] (computed post-crawl)
+C) Snippet / meta quality
+- titleText
+- titleLength
+- metaDescriptionText
+- metaDescriptionLength
+- ogTitle, ogDescription, ogImage (optional extraction; not core SEO but useful)
+D) Indexation/controls
+- metaRobotsContent
+- xRobotsTagHeader (from response headers)
+- canonicalUrl
+E) Schema quality
+- jsonLdRawBlocks (strings)
+- jsonLdParsed (objects)
+- schemaTypesDetected (flat list)
+- schemaErrors: parse errors + pointers
+F) A11y baseline
+- htmlLang (html[lang])
+- linksWithoutAccessibleNameCount (anchors with empty/whitespace text and no aria-label/title)
+G) Performance placeholder fields (to be filled in Block 4)
+- lighthouse: {lcpMs?, inpMs?, cls?, tbtMs?, scorePerf?, scoreA11y?, scoreSeo?, scoreBestPractices?} (optional)
+
+BLOCK 2 — INTERNAL LINK GRAPH BUILD
+After crawling and extracting pages:
+- Build directed graph internal links (normalized URL as key).
+- Compute per URL:
+  - inlinksCount
+  - inlinksAnchors histogram
+  - navLikely inlinks count (if source link is from nav/header/footer)
+Expose graph summary in report:
+- focusInlinksCount
+- topInlinkSourcesToFocus (top 10 URLs)
+- focusAnchorQuality metrics:
+  - percentGenericAnchors
+  - percentEmptyAnchors
+  - topAnchors list
+
+Generic anchor detection list (configurable):
+["kliknij", "więcej", "zobacz", "czytaj", "tutaj", "sprawdź", "dowiedz się", "link", "przejdź", "read more", "learn more", "here", "more"]
+
+BLOCK 3 — RULE EXPANSION (DETERMINISTIC)
+Add categories: serp, intent, internal_links, a11y, schema_quality, indexation_conflicts, content_quality.
+
+3.1 SERP / TITLE & SNIPPET (heuristics; do not hard-fail purely on length)
+- title_h1_mismatch (WARNING rank 6)
+  Evidence: title, H1, similarity score, missing focus keyword in either (if provided).
+- title_overwrite_risk (NOTICE rank 3)
+  Trigger if multiple H1 or if first two headings are near-duplicates; risk Google picks other text as title link. :contentReference[oaicite:4]{index=4}
+- meta_description_missing (WARNING rank 5) (if absent)
+- meta_description_duplicate (NOTICE rank 4) (global across pages)
+- meta_description_spammy (NOTICE rank 3)
+  Trigger: keyword repeated > N times or unusually high repetition ratio.
+
+3.2 INTENT / SERVICE PAGE COVERAGE (regex+headings; deterministic)
+Create “page intent classifier”:
+- If URL contains /psychoterapia/ or /psychiatria/ or /terapia- -> type=service_local
+For service_local pages enforce section presence heuristics:
+- missing_section_for_who (NOTICE rank 3) (keywords: "dla kogo", "kiedy", "wskazania")
+- missing_section_process (NOTICE rank 3) (keywords: "jak wygląda", "przebieg", "etapy")
+- missing_section_pricing_or_logistics (NOTICE rank 2) ("cennik", "koszt", "czas", "umów", "rezerwacja")
+- missing_section_faq (NOTICE rank 2) ("FAQ", "pytania", "?")
+- thin_content (WARNING rank 5)
+  Trigger: wordCountMain < threshold (config; default 300 for service pages, 150 for others)
+- duplicate_blocks_across_pages (NOTICE rank 3)
+  Detect repeated paragraph blocks via hashing normalized text chunks.
+
+3.3 INTERNAL LINKING (focus-centric and global)
+- orphan_page (WARNING rank 6): inlinksCount == 0 (excluding home)
+- near_orphan_page (NOTICE rank 4): inlinksCount <= 1
+- focus_inlinks_count_low (WARNING rank 7): focus inlinks < threshold (default 5)
+- focus_anchor_quality_low (WARNING rank 6): generic/empty anchors > 40% of inlinks to focus
+- excessive_nav_only_inlinks (NOTICE rank 3): majority of inlinks come from nav/footer (weak topical signal)
+
+3.4 INDEXATION CONFLICTS (robots/meta/x-robots/canonical)
+- robots_meta_xrobots_conflict (WARNING rank 8): meta robots allows index but X-Robots-Tag says noindex (or vice versa). :contentReference[oaicite:5]{index=5}
+- canonical_to_non_200 (WARNING rank 7): canonical URL returns not-200
+- sitemap_contains_non_canonical (NOTICE rank 4): URL in sitemap has canonical pointing elsewhere (only when sitemap is enabled)
+
+3.5 SCHEMA QUALITY (not just “missing”)
+- org_schema_incomplete (NOTICE rank 4): Organization/LocalBusiness missing required minimum (name,url,logo)
+- breadcrumb_schema_invalid (WARNING rank 6): BreadcrumbList missing itemListElement chain/url/name
+- schema_blocked_or_noindex_conflict (NOTICE rank 4): schema present but page noindex/blocked
+All schema checks must follow “consistency with page content” principle; do not recommend schema that contradicts visible content. :contentReference[oaicite:6]{index=6}
+
+3.6 A11Y BASELINE
+- missing_html_lang (NOTICE rank 2): html[lang] missing
+- links_without_accessible_name (NOTICE rank 2): count > threshold
+- images_alt_generic (NOTICE rank 2): alt in generic set ["image","zdjęcie","photo","banner","grafika"] or too short (<4 chars)
+
+BLOCK 4 — PERFORMANCE MEASUREMENT (MINIMUM REAL SIGNAL)
+Add optional Lighthouse run for:
+- focus primary_url (always if focus set)
+- homepage (always)
+Implementation:
+- Use Lighthouse CLI or Node API (choose one) in “headless Chrome”.
+- Capture:
+  - LCP, INP (or proxy metric from Lighthouse where available), CLS
+  - perf score
+Store in PageExtract.lighthouse and in report summary:
+- performanceFocus: {lcpMs, inpMs, cls, scorePerf}
+- performanceHome: {lcpMs, inpMs, cls, scorePerf}
+If Lighthouse unavailable, set performance section to “not measured” and avoid defaulting to 100.
+
+BLOCK 5 — REPORT OUTPUT IMPROVEMENTS
+Add sections to report.md/html/llm:
+A) Focus Deep Dive (new)
+- title + H1 + mismatch check result
+- top 5 headings outline
+- wordCountMain and thin_content result
+- inlinks count + top inlink sources + top anchors
+- proposed “next actions” bucketed:
+  - Quick wins (meta, headings, alts, internal links)
+  - Structural (content sections, schema, performance)
+B) Internal Link Graph Summary
+- Orphans / near-orphans list (top 20)
+- Focus inlinks table
+C) SERP Quality Summary
+- pages with title_h1_mismatch
+- pages with missing/duplicate/spammy descriptions
+D) Schema Quality Summary
+- invalid breadcrumb
+- incomplete org schema
+E) Performance Summary (if measured)
+- focus/home CWV metrics + thresholds and pass/fail
+
+BLOCK 6 — LLM TASK UPGRADES (PROPOSALS THAT MATTER)
+Replace “shorten title” single-line proposals with structured deliverables.
+
+LLM INPUT PAYLOAD MUST INCLUDE:
+- brief + focus keyword/goal
+- PageExtract for focus page (including mainText, headings, inlinks anchors, outlinks)
+- internal linking neighborhood: top 10 inlink sources with their headings/title
+- rules triggered for focus + top global issues
+
+LLM OUTPUT JSON (extend proposed_fixes schema):
+A) focus_serp_pack:
+- titles: 5 variants with rationale and which words are non-negotiable
+- meta_descriptions: 3 variants (informational/sales/neutral)
+- suggested_snippet_fallbacks: 3 short H1 alternatives (only suggestions; no auto-change)
+B) focus_outline_pack:
+- H2/H3 outline with “intent coverage” mapping (which user question it answers)
+- FAQ questions list (8–12) aligned to service page
+C) internal_link_plan:
+- 10 source URLs to link from + suggested anchor + suggested sentence context
+D) entity_local_pack:
+- checklist of trust elements to add to page (not code edits), aligned to page type
+- schema suggestions: Organization/LocalBusiness + BreadcrumbList + Service/WebPage minimal, only if consistent with content
+E) cannibalization_flags (optional if enough pages):
+- pairs of similar pages with suggested differentiation approach
+
+LLM MUST FOLLOW:
+- Do not fabricate metrics or claim “Google requires X length”.
+- Use title-link guidance: treat title and headings as primary; ensure consistency. :contentReference[oaicite:7]{index=7}
+- Schema must comply with structured data guidelines and visible content. :contentReference[oaicite:8]{index=8}
+
+BLOCK 7 — SCORING ADJUSTMENTS
+- Reduce weight of length-only issues (title/desc length) unless coupled with mismatch/spam signals.
+- Increase weight of:
+  - indexation conflicts (robots/x-robots/canonical non-200)
+  - focus internal linking low / orphans
+  - thin_content on service pages
+- Add separate “focus_uplift_score” computed from:
+  - no critical indexation conflicts on focus
+  - focus inlinks >= threshold
+  - no title_h1_mismatch
+  - wordCountMain >= threshold
+  - Lighthouse (if measured) meets “good” thresholds (configurable)
+
+BLOCK 8 — CLI FLAGS (OPTIONAL, BUT CONSISTENT)
+- --lighthouse (enable performance measurement)
+- --focus-inlinks-threshold <n>
+- --service-min-words <n>
+- --generic-anchors <path> (custom list)
+- --include-serp (enable serp/intent rules)
+Default behavior: enable all new deterministic rules; Lighthouse gated by flag (or auto-enabled for focus+home).
+
+ACCEPTANCE CRITERIA
+- Report includes new Focus Deep Dive with inlinks + outline/intent metrics.
+- New rules emit issues with concrete evidence (text snippets, counts, sample anchors, similarity score).
+- Performance is not defaulted to 100; measured or marked “not measured”.
+- LLM proposals produce structured packs (SERP pack, outline pack, internal link plan, entity/local pack).
+- Determinism preserved: stable ordering and stable evidence formatting.
+
+IMPLEMENTATION NOTES
+- Keep evidence compact: store only counts + top N samples (N configurable).
+- Similarity for title_h1_mismatch can be simple token Jaccard cosine on normalized tokens.
+- mainText extraction: prefer <main>, <article>, or largest text block heuristic.
+- Keep nav/footer removal heuristic: remove nodes matching nav, header, footer, aside, .menu, .nav, .footer.

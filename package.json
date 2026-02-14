@@ -7,8 +7,11 @@
     "seo-audit": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/cli.ts",
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "build:cli": "tsc -p tsconfig.json",
+    "dev:cli": "tsx src/cli.ts",
     "test": "vitest run"
   },
   "engines": {
@@ -17,10 +20,14 @@
   "dependencies": {
     "cheerio": "^1.1.2",
     "commander": "^14.0.1",
+    "next": "^15.5.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
     "vitest": "^4.0.18"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/react": "19.2.14",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2"
   }

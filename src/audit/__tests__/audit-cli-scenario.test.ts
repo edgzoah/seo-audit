@@ -48,12 +48,24 @@ test("runAuditCommand integration captures paginated pages and deduplicated outl
     });
     createdRunDirs.push(result.runDir);
 
-    const pages = await readJson<Array<{ final_url: string; outlinksInternal: Array<{ targetUrl: string; occurrences: number }> }>>(
-      path.join(result.runDir, "pages.json"),
-    );
+    const pages = await readJson<
+      Array<{
+        final_url: string;
+        outlinksInternal: Array<{ targetUrl: string; anchorText: string; rel: string; isNavLikely: boolean; occurrences: number }>;
+      }>
+    >(path.join(result.runDir, "pages.json"));
     assert.ok(
       pages.every((page) => page.outlinksInternal.every((link) => typeof link.occurrences === "number" && link.occurrences >= 1)),
       "each outlinksInternal record should include numeric occurrences",
+    );
+    assert.ok(
+      pages.every((page) => {
+        const keys = page.outlinksInternal.map(
+          (link) => `${link.targetUrl}\u0000${link.anchorText}\u0000${link.rel}\u0000${link.isNavLikely ? "1" : "0"}`,
+        );
+        return new Set(keys).size === keys.length;
+      }),
+      "each page should have deduplicated outlinksInternal records",
     );
 
     const crawled = new Set(pages.map((page) => normalizePathWithQuery(page.final_url)));

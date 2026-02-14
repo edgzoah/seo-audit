@@ -60,6 +60,14 @@ test("canonicalizeForCrawlIdentity keeps only pagination params and ignores hash
     "https://example.com/blog?paged=4",
   );
   assert.equal(canonicalizeForCrawlIdentity("https://example.com/blog?p=9"), "https://example.com/blog?p=9");
+  assert.equal(
+    canonicalizeForCrawlIdentity("https://example.com/blog?sort=desc&page=2&paged=2&p=2&utm=x#frag"),
+    "https://example.com/blog?p=2&page=2&paged=2",
+  );
+  assert.equal(
+    canonicalizeForCrawlIdentity("https://example.com/blog?page=2&page=2&utm=x"),
+    "https://example.com/blog?page=2&page=2",
+  );
 });
 
 test("surface crawl visits paginated listing pages and discovers article pages behind them", async () => {
@@ -79,6 +87,37 @@ test("surface crawl visits paginated listing pages and discovers article pages b
     for (const expectedPath of PAGINATED_EXPECTED_PATHS) {
       assert.ok(crawled.has(expectedPath), `expected crawled path: ${expectedPath}`);
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("surface crawl deduplicates URLs differing only by non-pagination query params", async () => {
+  const baseUrl = "https://fixture.local";
+  const routes = [
+    {
+      path: "/",
+      body: "<html><body><a href='/promo?utm_source=aa'>promo aa</a><a href='/promo?utm_source=bb'>promo bb</a></body></html>",
+    },
+    {
+      path: "/promo?utm_source=aa",
+      body: "<html><body>promo</body></html>",
+    },
+    {
+      path: "/promo?utm_source=bb",
+      body: "<html><body>promo</body></html>",
+    },
+  ];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createRouteAwareFetchMock(baseUrl, routes);
+  try {
+    const inputs = makeInputs(`${baseUrl}/`);
+    const result = await crawlSite(inputs, [`${baseUrl}/`]);
+    const crawled = result.pages.map((page) => `${new URL(page.final_url).pathname}${new URL(page.final_url).search}`);
+
+    const promoVariants = crawled.filter((entry) => entry.startsWith("/promo"));
+    assert.equal(promoVariants.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
