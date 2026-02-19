@@ -242,7 +242,7 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
         <div className="panel-head">
           <h2>Filters</h2>
           <span>
-            <Link href="/compare">Compare runs</Link>
+            <Link href="/new">Run new audit</Link>
           </span>
         </div>
 
