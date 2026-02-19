@@ -12,7 +12,7 @@ export default function NewAuditPage() {
         <CardContent className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-md border bg-background p-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow</p>
-            <p className="mt-1 text-xl font-semibold">4 steps</p>
+            <p className="mt-1 text-xl font-semibold">3 steps</p>
           </div>
           <div className="rounded-md border bg-background p-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Validation</p>

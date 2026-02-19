@@ -4,11 +4,12 @@ import { notFound } from "next/navigation";
 import { AuditPanel } from "../../../components/AuditPanel";
 import { IssueFilters } from "../../../components/domain/IssueFilters";
 import { IssueTable } from "../../../components/domain/IssueTable";
+import { RunNameEditor } from "../../../components/domain/RunNameEditor";
 import { RunKpiCards } from "../../../components/domain/RunKpiCards";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
-import { getRunById } from "../../../lib/audits/repo";
+import { getRunById, getRunDisplayName } from "../../../lib/audits/repo";
 import { compactUrl } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ function normalizeSeverity(value: string | undefined): SeverityRank | "all" {
 export default async function AuditDetailPage({ params, searchParams }: AuditDetailPageProps) {
   const { runId } = await params;
   const query = searchParams ? await searchParams : undefined;
-  const report = await getRunById(runId);
+  const [report, displayName] = await Promise.all([getRunById(runId), getRunDisplayName(runId)]);
 
   if (!report) notFound();
 
@@ -47,12 +48,13 @@ export default async function AuditDetailPage({ params, searchParams }: AuditDet
       <Card className="grid-bg">
         <CardHeader>
           <div className="space-y-1">
-            <CardTitle className="text-2xl">{compactUrl(report.inputs.target)}</CardTitle>
+            <CardTitle className="text-2xl">{displayName ?? compactUrl(report.inputs.target)}</CardTitle>
             <CardDescription>
               Run ID: {report.run_id} • Coverage: {report.inputs.coverage} • Started {new Date(report.started_at).toLocaleString()}
             </CardDescription>
           </div>
           <Badge variant="outline">{report.issues.length} total issues</Badge>
+          <RunNameEditor runId={report.run_id} initialName={displayName} />
         </CardHeader>
       </Card>
 

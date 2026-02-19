@@ -1,0 +1,2 @@
+ALTER TABLE "AuditRun"
+ADD COLUMN IF NOT EXISTS "displayName" TEXT;

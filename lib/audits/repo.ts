@@ -7,6 +7,7 @@ type SqlParam = string | number | boolean | null;
 
 export interface RunSummary {
   run_id: string;
+  display_name: string | null;
   started_at: string;
   inputs: {
     target: string;
@@ -45,6 +46,7 @@ export interface ListRunsPageResult {
 
 interface AuditRunListRow {
   runId: string;
+  displayName: string | null;
   startedAt: Date | string;
   target: string;
   coverage: string;
@@ -86,6 +88,7 @@ function toRunSummaryFromRow(row: AuditRunListRow): RunSummary {
   const startedAtIso = row.startedAt instanceof Date ? row.startedAt.toISOString() : new Date(row.startedAt).toISOString();
   return {
     run_id: row.runId,
+    display_name: row.displayName,
     started_at: startedAtIso,
     inputs: {
       target: row.target,
@@ -159,7 +162,7 @@ export async function listRunsPage(params: ListRunsPageParams = {}): Promise<Lis
   const offsetParam = `$${where.values.length + 2}`;
 
   const rows = await db.unsafe<AuditRunListRow[]>(
-    `SELECT "runId", "startedAt", "target", "coverage", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices"
+    `SELECT "runId", "displayName", "startedAt", "target", "coverage", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices"
      FROM "AuditRun"
      ${where.sql}
      ORDER BY ${orderBy}
@@ -201,6 +204,26 @@ export async function getRunById(runId: string): Promise<Report | null> {
   const row = rows[0];
   if (!row) return null;
   return parseReportJson(row.runId, row.reportJson);
+}
+
+export async function getRunDisplayName(runId: string): Promise<string | null> {
+  ensureDbConfigured();
+  const db = getDb();
+  const rows = await db.unsafe<Array<{ displayName: string | null }>>(
+    'SELECT "displayName" FROM "AuditRun" WHERE "runId" = $1 LIMIT 1',
+    [runId],
+  );
+  return rows[0]?.displayName ?? null;
+}
+
+export async function setRunDisplayName(runId: string, displayName: string | null): Promise<boolean> {
+  ensureDbConfigured();
+  const db = getDb();
+  const rows = await db.unsafe<Array<{ runId: string }>>(
+    'UPDATE "AuditRun" SET "displayName" = $2, "updatedAt" = NOW() WHERE "runId" = $1 RETURNING "runId"',
+    [runId, displayName],
+  );
+  return rows.length > 0;
 }
 
 export async function listDiffCandidates(limit = 200): Promise<string[]> {

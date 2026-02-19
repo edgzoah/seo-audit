@@ -93,7 +93,10 @@ export default async function HomePage() {
             <TableBody>
               {runs.map((run) => (
                 <TableRow key={run.run_id}>
-                  <TableCell className="font-medium">{run.run_id}</TableCell>
+                  <TableCell className="font-medium">
+                    {run.display_name ?? run.run_id}
+                    {run.display_name ? <p className="text-xs text-muted-foreground">{run.run_id}</p> : null}
+                  </TableCell>
                   <TableCell className="max-w-[300px] truncate" title={run.inputs.target}>{run.inputs.target}</TableCell>
                   <TableCell>{formatPercent(run.summary.score_total)}</TableCell>
                   <TableCell>{run.summary.pages_crawled}</TableCell>

@@ -152,9 +152,12 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
       key: "run",
       header: "Run",
       render: (row) => (
-        <Link href={`/audits/${row.run_id}`} className="font-medium text-primary hover:underline">
-          {row.run_id}
-        </Link>
+        <div className="space-y-0.5">
+          <Link href={`/audits/${row.run_id}`} className="font-medium text-primary hover:underline">
+            {row.display_name ?? row.run_id}
+          </Link>
+          {row.display_name ? <p className="text-xs text-muted-foreground">{row.run_id}</p> : null}
+        </div>
       ),
     },
     {

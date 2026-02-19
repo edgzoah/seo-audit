@@ -14,7 +14,7 @@ export function AppSidebar() {
     <aside className="sidebar-glass hidden h-screen flex-col gap-4 p-4 md:flex">
       <div className="rounded-lg border bg-card p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">SEO Audit</p>
-        <p className="mt-1 text-sm font-semibold">B2B Operations Hub</p>
+        <p className="mt-1 text-sm font-semibold">SEO Audit Dashboard</p>
       </div>
       <nav className="grid gap-1">
         {appNavItems.map((item) => {

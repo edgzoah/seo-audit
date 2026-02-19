@@ -5,8 +5,7 @@ import type { Issue } from "../../lib/audits/types";
 import { compactUrl, humanize } from "../../app/lib/format";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 
 function severityVariant(severity: Issue["severity"]): "danger" | "warning" | "secondary" {
@@ -59,7 +58,7 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
             <TableHead>Category</TableHead>
             <TableHead>Severity</TableHead>
             <TableHead>Affected</TableHead>
-            <TableHead className="w-[160px]">Evidence</TableHead>
+            <TableHead className="w-[160px]">Details</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -94,16 +93,11 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
               </TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" size="sm">Preview</Button>
-                    </PopoverTrigger>
-                    <PopoverContent>
-                      <p className="text-sm">{issue.evidence[0]?.message ?? "No evidence"}</p>
-                    </PopoverContent>
-                  </Popover>
+                  <Badge variant="outline" className="inline-flex w-10 justify-center tabular-nums">
+                    {issue.evidence.length}
+                  </Badge>
                   <Button variant="secondary" size="sm" onClick={() => setActiveKey(rowKey)}>
-                    Open
+                    View details
                   </Button>
                 </div>
               </TableCell>
@@ -114,19 +108,22 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
       </Table>
 
       <Dialog open={Boolean(activeIssue)} onOpenChange={(open) => (!open ? setActiveKey(null) : null)}>
-        <DialogTrigger asChild>
-          <span />
-        </DialogTrigger>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{activeIssue?.title ?? "Evidence"}</DialogTitle>
-            <DialogDescription>{activeIssue?.description ?? ""}</DialogDescription>
+            <DialogTitle>Details</DialogTitle>
+            <DialogDescription>{activeIssue?.title ?? ""}</DialogDescription>
           </DialogHeader>
-          <div className="max-h-[60vh] space-y-2 overflow-auto">
+          <div className="max-h-[65vh] space-y-2 overflow-auto pr-1">
             {activeIssue?.evidence.map((item, index) => (
               <div key={`${activeIssue.id}-${index}`} className="rounded-md border p-3">
-                <p className="text-sm font-medium">{humanize(item.type)}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{item.message}</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{humanize(item.type)}</p>
+                  {typeof item.status === "number" ? <Badge variant="outline">HTTP {item.status}</Badge> : null}
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">{item.message}</p>
+                {item.url ? <p className="mt-2 text-xs text-muted-foreground">URL: {compactUrl(item.url)}</p> : null}
+                {item.source_url ? <p className="mt-1 text-xs text-muted-foreground">Source: {compactUrl(item.source_url)}</p> : null}
+                {item.target_url ? <p className="mt-1 text-xs text-muted-foreground">Target: {compactUrl(item.target_url)}</p> : null}
               </div>
             ))}
           </div>
