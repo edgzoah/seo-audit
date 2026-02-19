@@ -1,5 +1,8 @@
 "use client";
 
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+
 type CoverageMode = "quick" | "surface" | "full";
 
 interface CoverageModeToggleProps {
@@ -16,17 +19,18 @@ const OPTIONS: Array<{ value: CoverageMode; label: string; copy: string }> = [
 
 export function CoverageModeToggle({ value, onChange, onBlur }: CoverageModeToggleProps) {
   return (
-    <div className="coverage-toggle" onBlur={onBlur}>
+    <div className="grid gap-2 md:grid-cols-3" onBlur={onBlur}>
       {OPTIONS.map((option) => (
-        <button
+        <Button
           key={option.value}
           type="button"
-          className={`coverage-toggle-btn ${value === option.value ? "is-active" : ""}`}
+          variant={value === option.value ? "default" : "outline"}
+          className={cn("h-auto flex-col items-start px-3 py-2 text-left", value === option.value && "ring-2 ring-primary/30")}
           onClick={() => onChange(option.value)}
         >
-          <strong>{option.label}</strong>
-          <span>{option.copy}</span>
-        </button>
+          <span>{option.label}</span>
+          <span className="text-xs opacity-80">{option.copy}</span>
+        </Button>
       ))}
     </div>
   );

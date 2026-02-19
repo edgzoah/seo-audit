@@ -1,36 +1,31 @@
-import Link from "next/link";
-
-import { NewAuditWizard } from "../../components/forms/NewAuditWizard";
+import { AuditWizard } from "../../components/domain/AuditWizard";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 export default function NewAuditPage() {
   return (
-    <main className="container app-shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Audit Creator</p>
-          <h1>Create a New SEO Audit</h1>
-          <p className="hero-copy">Four-step workflow with validation, confirmation, and live run state.</p>
-        </div>
-        <div className="hero-kpis">
-          <div className="kpi-tile">
-            <span>Workflow</span>
-            <strong>4 steps</strong>
+    <div className="space-y-6">
+      <Card className="grid-bg">
+        <CardHeader>
+          <CardTitle>Create New Audit</CardTitle>
+          <CardDescription>Multi-step, validated workflow for deterministic CLI runs.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border bg-background p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow</p>
+            <p className="mt-1 text-xl font-semibold">4 steps</p>
           </div>
-          <div className="kpi-tile">
-            <span>Output</span>
-            <strong>Run ID</strong>
+          <div className="rounded-md border bg-background p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Validation</p>
+            <p className="mt-1 text-xl font-semibold">Zod + RHF</p>
           </div>
-        </div>
-      </section>
+          <div className="rounded-md border bg-background p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Result</p>
+            <p className="mt-1 text-xl font-semibold">Run ID</p>
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="panel-head">
-        <h2>Setup</h2>
-        <span>
-          <Link href="/audits">Back to audits</Link>
-        </span>
-      </div>
-
-      <NewAuditWizard />
-    </main>
+      <AuditWizard />
+    </div>
   );
 }
