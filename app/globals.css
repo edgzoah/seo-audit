@@ -764,6 +764,45 @@ details summary {
   flex-wrap: wrap;
 }
 
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.score-delta-chart {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.score-delta-row {
+  display: grid;
+  grid-template-columns: 190px 1fr 70px;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.score-delta-track {
+  border: 1px solid #d2e1f4;
+  border-radius: 999px;
+  background: #f7fbff;
+  height: 15px;
+  overflow: hidden;
+}
+
+.score-delta-bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.score-delta-bar.is-positive {
+  background: linear-gradient(90deg, #1f9f77, #2fb290);
+}
+
+.score-delta-bar.is-negative {
+  background: linear-gradient(90deg, #d14a43, #e26058);
+}
+
 @media (max-width: 1180px) {
   .kpi-ribbon {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -812,6 +851,10 @@ details summary {
   .audits-filters {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 740px) {
@@ -830,6 +873,10 @@ details summary {
 
   .audits-filters {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .score-delta-row {
+    grid-template-columns: 120px 1fr 56px;
   }
 
   .issue-actions {

@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { buildDiffReport, type DiffReport } from "../../src/report/diff";
 import { validateReport } from "../../src/report/report-schema";
 import type { Report } from "./types";
 
@@ -28,6 +29,12 @@ async function readReportFile(runId: string): Promise<string> {
   const runDir = toRunDirectory(runId);
   const reportPath = path.join(runDir, "report.json");
   return readFile(reportPath, "utf-8");
+}
+
+async function readDiffFile(runId: string): Promise<string> {
+  const runDir = toRunDirectory(runId);
+  const diffPath = path.join(runDir, "diff.json");
+  return readFile(diffPath, "utf-8");
 }
 
 export async function loadReport(runId: string): Promise<Report>;
@@ -82,4 +89,41 @@ export async function listDiffCandidates(): Promise<string[]> {
   );
 
   return withReports.filter((runId): runId is string => runId !== null);
+}
+
+function isDiffReport(value: unknown): value is DiffReport {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<DiffReport>;
+  return (
+    typeof candidate.baseline_run_id === "string" &&
+    typeof candidate.current_run_id === "string" &&
+    typeof candidate.score_total_delta === "number" &&
+    typeof candidate.score_by_category_delta === "object" &&
+    Array.isArray(candidate.resolved_issues) &&
+    Array.isArray(candidate.new_issues) &&
+    Array.isArray(candidate.regressed_issues)
+  );
+}
+
+export async function readDiff(baselineId: string, currentId: string): Promise<DiffReport | null> {
+  try {
+    const raw = await readDiffFile(currentId);
+    const parsed: unknown = JSON.parse(raw);
+    if (isDiffReport(parsed) && parsed.baseline_run_id === baselineId && parsed.current_run_id === currentId) {
+      return parsed;
+    }
+  } catch {
+    // fall through to dynamic diff build
+  }
+
+  const baseline = await readRun(baselineId);
+  const current = await readRun(currentId);
+  if (!baseline || !current) {
+    return null;
+  }
+
+  return buildDiffReport(baseline, current);
 }
