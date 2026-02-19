@@ -141,3 +141,6 @@ SEO-AUDIT-CLI_MASTER_SPEC.txt
 .vscode/
 .agents/
 runs/
+!app/runs/
+!app/runs/[runId]/
+!app/runs/[runId]/page.tsx
