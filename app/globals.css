@@ -666,6 +666,104 @@ details summary {
   text-transform: uppercase;
 }
 
+.issue-table .issue-row td {
+  vertical-align: top;
+}
+
+.issue-url-stack {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.issue-url-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.issue-actions {
+  display: none;
+  gap: 0.3rem;
+}
+
+.group:hover .issue-actions {
+  display: inline-flex;
+}
+
+.issue-action-btn {
+  border: 1px solid #ccdef6;
+  border-radius: 7px;
+  background: #f3f8ff;
+  color: #133d75;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.4rem;
+}
+
+.issue-action-btn:hover {
+  text-decoration: none;
+  background: #e6f1ff;
+}
+
+.evidence-preview-list {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.evidence-popover {
+  position: relative;
+}
+
+.evidence-popover summary {
+  list-style: none;
+  border: 1px solid #ccdef6;
+  border-radius: 999px;
+  background: #eef5ff;
+  padding: 0.14rem 0.5rem;
+}
+
+.evidence-popover-content {
+  position: absolute;
+  z-index: 10;
+  width: 280px;
+  border: 1px solid #cbddf5;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.6rem;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.evidence-popover-content p {
+  margin: 0 0 0.45rem;
+}
+
+.evidence-dialog {
+  margin-top: 0.45rem;
+}
+
+.evidence-dialog-content {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.evidence-item {
+  border: 1px solid #d8e4f5;
+  border-radius: 10px;
+  padding: 0.5rem;
+  background: #fbfdff;
+}
+
+.evidence-item p {
+  margin: 0.35rem 0;
+}
+
+.evidence-links {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 1180px) {
   .kpi-ribbon {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -732,6 +830,10 @@ details summary {
 
   .audits-filters {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .issue-actions {
+    display: inline-flex;
   }
 
   .data-table {

@@ -171,7 +171,7 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
       key: "run",
       header: "Run",
       render: (row) => (
-        <Link className="run-link" href={`/runs/${row.run_id}`}>
+        <Link className="run-link" href={`/audits/${row.run_id}`}>
           {row.run_id}
         </Link>
       ),
