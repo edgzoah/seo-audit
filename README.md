@@ -6,6 +6,7 @@ Local CLI tool for deterministic SEO audits (crawl + extract + rule engine + sco
 
 - Node.js 20+
 - npm
+- PostgreSQL 14+
 - Optional for AI: `codex` CLI (`codex exec --help` should work, and you should be logged in)
 
 ## Install
@@ -25,12 +26,33 @@ npm run dev
 
 Open:
 
-- `http://localhost:3000/` - list of runs from `runs/`
-- `http://localhost:3000/runs/<run-id>` - run details
-- `http://localhost:3000/api/runs` - API list
-- `http://localhost:3000/api/runs/<run-id>` - API report JSON
+- `http://localhost:3000/` - dashboard (DB-backed recent runs)
+- `http://localhost:3000/audits` - paginated audits list
+- `http://localhost:3000/audits/<run-id>` - run details
+- `http://localhost:3000/api/runs` - paginated/filterable API list
+- `http://localhost:3000/api/runs/<run-id>` - API report JSON from DB
 
 Current setup keeps backend/domain logic in `src/` and uses Next.js `app/` as UI/API layer.
+
+## Database Setup
+
+Create `.env.local` (or export env var) using `.env.example`:
+
+```bash
+DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/seo_audit?schema=public\"
+```
+
+Apply schema:
+
+```bash
+npx prisma migrate deploy
+```
+
+Import historical filesystem runs into DB:
+
+```bash
+npm run db:migrate-runs
+```
 
 ## CLI (legacy/compatible mode)
 
@@ -53,6 +75,12 @@ Run an audit:
 
 ```bash
 node dist/cli.js audit https://example.com -C surface --depth 2 --format md
+```
+
+Disable DB write for one run (optional):
+
+```bash
+node dist/cli.js audit https://example.com --no-db-write
 ```
 
 Generate report from an existing run:

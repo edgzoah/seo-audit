@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, LineChart, ShieldCheck } from "lucide-react";
 
-import { listRuns } from "../lib/audits/fs";
+import { listRunsPage } from "../lib/audits/repo";
 import { RunKpiCards } from "../components/domain/RunKpiCards";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -9,8 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { formatPercent } from "./lib/format";
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
-  const runs = await listRuns(20);
+  const { items: runs } = await listRunsPage({ page: 1, pageSize: 20, sort: "newest" });
   const recent = runs[0];
 
   return (

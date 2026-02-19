@@ -5,6 +5,10 @@ import { buildDiffReport, type DiffReport } from "../../src/report/diff";
 import { validateReport } from "../../src/report/report-schema";
 import type { Report } from "./types";
 
+/**
+ * @deprecated Runtime source of truth moved to PostgreSQL (`lib/audits/repo.ts`).
+ * Keep this module only for migration tools and local fallback workflows.
+ */
 export type RunSummary = Pick<Report, "run_id" | "started_at" | "summary" | "inputs">;
 
 const RUNS_DIR = path.join(process.cwd(), "runs");

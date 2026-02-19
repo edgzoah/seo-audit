@@ -118,6 +118,7 @@ async function run(): Promise<void> {
     .option("--service-min-words <n>", "Minimum words for service pages", parsePositiveInteger)
     .option("--generic-anchors <path>", "Path to custom generic anchor list (newline/comma separated)")
     .option("--no-include-serp", "Disable SERP/intent-related deterministic rules")
+    .option("--no-db-write", "Disable writing audit result into PostgreSQL")
     .action(async (target: string, options: AuditCliOptions) => {
       const progress = buildProgressRenderer();
       try {

@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AuditRunStatus {
+  healthy
+  watch
+  critical
+}
+
+model AuditRun {
+  id          String         @id @default(uuid()) @db.Uuid
+  runId       String         @unique
+  target      String
+  domain      String?
+  coverage    String
+  startedAt   DateTime
+  finishedAt  DateTime
+  scoreTotal  Float
+  pagesCrawled Int
+  errors      Int
+  warnings    Int
+  notices     Int
+  status      AuditRunStatus
+  summaryJson Json
+  reportJson  Json
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([startedAt(sort: Desc)])
+  @@index([status, startedAt(sort: Desc)])
+  @@index([coverage, startedAt(sort: Desc)])
+  @@index([domain, startedAt(sort: Desc)])
+  @@index([scoreTotal(sort: Desc)])
+  @@index([target])
+}
+
+model AuditDiff {
+  id            String   @id @default(uuid()) @db.Uuid
+  baselineRunId String
+  currentRunId  String
+  diffJson      Json
+  createdAt     DateTime @default(now())
+
+  @@unique([baselineRunId, currentRunId])
+  @@index([currentRunId])
+}

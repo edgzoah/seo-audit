@@ -1,23 +1,15 @@
-import { readdir, unlink, writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
 import { NextResponse } from "next/server";
 
+import { getRunById } from "../../../../lib/audits/repo";
 import { newAuditSchema } from "../../../../lib/audits/new-audit-schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-async function listRunDirs(): Promise<string[]> {
-  const runsDir = path.join(process.cwd(), "runs");
-  const entries = await readdir(runsDir, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("run-"))
-    .map((entry) => entry.name)
-    .sort((a, b) => b.localeCompare(a));
-}
 
 function buildArgs(input: ReturnType<typeof newAuditSchema.parse>): string[] {
   const args = [
@@ -84,7 +76,6 @@ export async function POST(request: Request): Promise<Response> {
     tempInputPath = path.join(tmpdir(), `seo-audit-inputs-${Date.now()}.json`);
     await writeFile(tempInputPath, `${JSON.stringify(input, null, 2)}\n`, "utf-8");
 
-    const before = await listRunDirs();
     const args = buildArgs(input);
     const result = await runAuditCli(args);
 
@@ -97,12 +88,15 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
-    const after = await listRunDirs();
-    const diff = after.filter((runId) => !before.includes(runId));
-    const runId = extractRunId(result.stdout) ?? diff[0] ?? null;
+    const runId = extractRunId(result.stdout);
 
     if (!runId) {
       return NextResponse.json({ error: "Audit finished but run id could not be detected." }, { status: 500 });
+    }
+
+    const report = await getRunById(runId);
+    if (!report) {
+      return NextResponse.json({ error: `Audit finished but run was not saved in DB: ${runId}` }, { status: 500 });
     }
 
     return NextResponse.json({ runId });

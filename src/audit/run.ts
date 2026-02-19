@@ -20,6 +20,7 @@ import type {
   ReportFormat,
 } from "../report/report-schema.js";
 import { loadReportFromRun, writeRunDiffArtifacts, writeRunReports } from "../report/index.js";
+import { buildAndUpsertDiff, getAuditReportByRunId, isDbWriteEnabled, upsertAuditRun } from "../db/store.js";
 import { runRules } from "../rules/index.js";
 
 export interface AuditRunResult {
@@ -49,6 +50,7 @@ export interface AuditCliOptions {
   serviceMinWords?: number;
   genericAnchors?: string;
   includeSerp?: boolean;
+  dbWrite?: boolean;
   onProgress?: (progress: AuditProgressEvent) => void;
 }
 
@@ -1186,10 +1188,22 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   emitProgress(options, 94, "report", "Rendering report files");
   await writeRunReports(runDir, report);
 
+  if (isDbWriteEnabled(options.dbWrite)) {
+    emitProgress(options, 96, "db", "Persisting audit run in database");
+    await upsertAuditRun(report);
+  }
+
   if (inputs.baseline_run_id) {
     emitProgress(options, 97, "diff", "Generating diff artifacts");
-    const baselineReport = await loadReportFromRun(inputs.baseline_run_id);
+    const baselineReport = isDbWriteEnabled(options.dbWrite)
+      ? (await getAuditReportByRunId(inputs.baseline_run_id)) ?? (await loadReportFromRun(inputs.baseline_run_id))
+      : await loadReportFromRun(inputs.baseline_run_id);
+
     await writeRunDiffArtifacts(runDir, baselineReport, report);
+
+    if (isDbWriteEnabled(options.dbWrite)) {
+      await buildAndUpsertDiff(baselineReport, report);
+    }
   }
 
   emitProgress(options, 100, "done", "Completed");

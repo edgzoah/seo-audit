@@ -8,9 +8,11 @@ import { CompareRunMenu } from "../../components/common/CompareRunMenu";
 import { CompareSummary } from "../../components/domain/CompareSummary";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { listDiffCandidates, readDiff } from "../../lib/audits/fs";
+import { getDiff, listDiffCandidates } from "../../lib/audits/repo";
 import type { DiffReport } from "../../lib/audits/types";
 import { humanize } from "../lib/format";
+
+export const dynamic = "force-dynamic";
 
 type Category = string;
 type ScoreDeltaMap = Record<Category, number>;
@@ -110,7 +112,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
   }
 
   const selected = getInitialSelection(candidates, query?.baseline, query?.current);
-  const diff = await readDiff(selected.baseline, selected.current);
+  const diff = await getDiff(selected.baseline, selected.current);
   if (!diff) {
     return <p className="text-sm text-muted-foreground">Could not build diff for selected runs.</p>;
   }

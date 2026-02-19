@@ -30,7 +30,7 @@ export function AuditsFilterBar({ defaults, domains }: AuditsFilterBarProps) {
   const [status, setStatus] = useState(defaults.status);
   const [severity, setSeverity] = useState(defaults.severity);
   const [coverage, setCoverage] = useState(defaults.coverage);
-  const [domain, setDomain] = useState(defaults.domain === "all" ? "" : defaults.domain);
+  const [domain, setDomain] = useState(defaults.domain);
   const [sort, setSort] = useState<SortFilter>(defaults.sort);
 
   const sortLabel = useMemo(() => {
@@ -52,6 +52,7 @@ export function AuditsFilterBar({ defaults, domains }: AuditsFilterBarProps) {
     params.set("severity", severity);
     params.set("coverage", coverage);
     params.set("sort", sort);
+    params.set("page", "1");
     if (domain.trim().length > 0) {
       params.set("domain", domain.trim());
     } else {

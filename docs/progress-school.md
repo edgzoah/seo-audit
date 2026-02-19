@@ -16,6 +16,7 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Source of truth for this stage: `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Commit strategy: 1 step = max 1-2 commits.
 - Validation gates: `npm run build`, `npm run lint`, `npx tsc -p tsconfig.next.json --noEmit`.
+- Runtime data source (current): PostgreSQL (`AuditRun`, `AuditDiff`), not `runs/*` files.
 
 ## Requirement Mapping
 
@@ -25,6 +26,9 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Compare view: `app/compare/page.tsx`, `components/charts/ScoreDeltaChart.tsx`
 - Audit creator: `app/new/page.tsx`, `components/forms/NewAuditWizard.tsx`, `app/api/audits/run/route.ts`
 - Data layer: `lib/audits/fs.ts`, `lib/audits/types.ts`
+- DB repository layer: `lib/audits/repo.ts`, `lib/audits/mappers.ts`, `lib/db/prisma.ts`
+- CLI DB write path: `src/db/store.ts`, `src/db/prisma.ts`
+- Prisma schema/migrations: `prisma/schema.prisma`, `prisma/migrations/20260219190000_init_audits_db/migration.sql`
 - shadcn-style UI layer: `components/ui/*`
 - App shell: `components/app-shell/AppShell.tsx`, `components/app-shell/AppSidebar.tsx`, `components/app-shell/AppTopbar.tsx`
 - Legacy redirect route: `app/runs/[runId]/page.tsx`
@@ -95,6 +99,14 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 
 ### Remaining gaps vs original checklist
 - None for this implementation scope.
+
+## DB Migration Notes
+
+- `/audits` now uses server-side pagination/filters/sort via SQL (`listRunsPage`) and no longer scans `runs/*` at render time.
+- `/api/runs` now accepts query params: `page`, `pageSize`, `status`, `severity`, `coverage`, `domain`, `sort`.
+- `/api/runs/[runId]` returns report payload from DB.
+- `POST /api/audits/run` resolves `runId` from CLI stdout and validates DB persistence.
+- Import utility for historical runs: `npm run db:migrate-runs` (`scripts/migrate-runs-to-db.ts`).
 
 ## Design System Usage
 

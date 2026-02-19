@@ -3,17 +3,20 @@ import Link from "next/link";
 import { DataTable, type DataTableColumn } from "../../components/DataTable";
 import { AuditsFilterBar } from "../../components/domain/AuditsFilterBar";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { listRuns } from "../../lib/audits/fs";
-import type { Report } from "../../lib/audits/types";
+import { listRunsPage, type RunCoverageFilter, type RunSeverityFilter, type RunSort, type RunStatusFilter, type RunSummary } from "../../lib/audits/repo";
 import { compactUrl, formatPercent } from "../lib/format";
 
-type AuditRow = Pick<Report, "run_id" | "started_at" | "summary" | "inputs">;
+export const dynamic = "force-dynamic";
+
+type AuditRow = RunSummary;
 type AuditStatus = "healthy" | "watch" | "critical";
-type StatusFilter = "all" | AuditStatus;
-type SeverityFilter = "all" | "error" | "warning" | "notice";
-type CoverageFilter = "all" | Report["inputs"]["coverage"];
-type SortFilter = "newest" | "oldest" | "score_desc" | "score_asc" | "pages_desc" | "warnings_desc";
+
+type StatusFilter = RunStatusFilter;
+type SeverityFilter = RunSeverityFilter;
+type CoverageFilter = RunCoverageFilter;
+type SortFilter = RunSort;
 
 interface AuditListRow extends AuditRow {
   domain: string | null;
@@ -27,8 +30,12 @@ interface AuditsPageProps {
     coverage?: string;
     domain?: string;
     sort?: string;
+    page?: string;
+    pageSize?: string;
   }>;
 }
+
+const DEFAULT_PAGE_SIZE = 25;
 
 function getStatus(row: AuditRow): AuditStatus {
   if (row.summary.errors > 0) return "critical";
@@ -66,24 +73,20 @@ function normalizeSort(value: string | undefined): SortFilter {
   return "newest";
 }
 
-function isRowMatchingSeverity(row: AuditListRow, severity: SeverityFilter): boolean {
-  if (severity === "all") return true;
-  if (severity === "error") return row.summary.errors > 0;
-  if (severity === "warning") return row.summary.warnings > 0;
-  return row.summary.notices > 0;
+function normalizePage(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "1", 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
 }
 
-function sortRows(rows: AuditListRow[], sort: SortFilter): AuditListRow[] {
-  const copy = [...rows];
-  copy.sort((a, b) => {
-    if (sort === "oldest") return a.started_at.localeCompare(b.started_at);
-    if (sort === "score_desc") return b.summary.score_total - a.summary.score_total;
-    if (sort === "score_asc") return a.summary.score_total - b.summary.score_total;
-    if (sort === "pages_desc") return b.summary.pages_crawled - a.summary.pages_crawled;
-    if (sort === "warnings_desc") return b.summary.warnings - a.summary.warnings;
-    return b.started_at.localeCompare(a.started_at);
-  });
-  return copy;
+function normalizePageSize(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? String(DEFAULT_PAGE_SIZE), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_PAGE_SIZE;
+  }
+  return Math.min(100, parsed);
 }
 
 function statusBadge(status: AuditStatus): "success" | "warning" | "danger" {
@@ -92,32 +95,57 @@ function statusBadge(status: AuditStatus): "success" | "warning" | "danger" {
   return "danger";
 }
 
+function buildPageHref(input: {
+  status: StatusFilter;
+  severity: SeverityFilter;
+  coverage: CoverageFilter;
+  sort: SortFilter;
+  domain: string;
+  page: number;
+  pageSize: number;
+}): string {
+  const params = new URLSearchParams();
+  if (input.status !== "all") params.set("status", input.status);
+  if (input.severity !== "all") params.set("severity", input.severity);
+  if (input.coverage !== "all") params.set("coverage", input.coverage);
+  if (input.sort !== "newest") params.set("sort", input.sort);
+  if (input.domain.length > 0) params.set("domain", input.domain);
+  if (input.page > 1) params.set("page", String(input.page));
+  if (input.pageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(input.pageSize));
+
+  const query = params.toString();
+  return query.length > 0 ? `/audits?${query}` : "/audits";
+}
+
 export default async function AuditsPage({ searchParams }: AuditsPageProps) {
   const params = searchParams ? await searchParams : undefined;
   const statusFilter = normalizeStatus(params?.status);
   const severityFilter = normalizeSeverity(params?.severity);
   const coverageFilter = normalizeCoverage(params?.coverage);
   const sortFilter = normalizeSort(params?.sort);
-  const domainFilter = params?.domain ?? "all";
+  const page = normalizePage(params?.page);
+  const pageSize = normalizePageSize(params?.pageSize);
+  const domainFilter = (params?.domain ?? "").trim();
 
-  const rows = (await listRuns(300)).map((run): AuditListRow => ({
+  const pageResult = await listRunsPage({
+    page,
+    pageSize,
+    status: statusFilter,
+    severity: severityFilter,
+    coverage: coverageFilter,
+    domain: domainFilter.length > 0 ? domainFilter : undefined,
+    sort: sortFilter,
+  });
+
+  const rows = pageResult.items.map((run): AuditListRow => ({
     ...run,
     domain: getDomain(run.inputs.target),
     status: getStatus(run),
   }));
 
-  const domains = Array.from(new Set(rows.map((row) => row.domain).filter((row): row is string => row !== null))).sort((a, b) =>
-    a.localeCompare(b),
-  );
-
-  const filteredRows = rows.filter((row) => {
-    if (statusFilter !== "all" && row.status !== statusFilter) return false;
-    if (coverageFilter !== "all" && row.inputs.coverage !== coverageFilter) return false;
-    if (domainFilter !== "all" && row.domain !== domainFilter) return false;
-    return isRowMatchingSeverity(row, severityFilter);
-  });
-
-  const sortedRows = sortRows(filteredRows, sortFilter);
+  const totalPages = Math.max(1, Math.ceil(pageResult.total / pageResult.pageSize));
+  const hasPreviousPage = pageResult.page > 1;
+  const hasNextPage = pageResult.page < totalPages;
 
   const columns: DataTableColumn<AuditListRow>[] = [
     {
@@ -172,20 +200,26 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
       <Card className="grid-bg">
         <CardHeader>
           <CardTitle>Audit Runs</CardTitle>
-          <CardDescription>Filter and sort deterministic run snapshots.</CardDescription>
+          <CardDescription>Server-side filtered and paginated run snapshots.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-md border bg-background p-3">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Runs</p>
-            <p className="mt-1 text-2xl font-semibold">{rows.length}</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Matching Runs</p>
+            <p className="mt-1 text-2xl font-semibold">{pageResult.total}</p>
           </div>
           <div className="rounded-md border bg-background p-3">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Filtered</p>
-            <p className="mt-1 text-2xl font-semibold">{sortedRows.length}</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Page</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {pageResult.page} / {totalPages}
+            </p>
           </div>
           <div className="rounded-md border bg-background p-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Actions</p>
-            <p className="mt-1 text-sm"><Link className="text-primary hover:underline" href="/new">Create a new audit run</Link></p>
+            <p className="mt-1 text-sm">
+              <Link className="text-primary hover:underline" href="/new">
+                Create a new audit run
+              </Link>
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -203,7 +237,7 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
               domain: domainFilter,
               sort: sortFilter,
             }}
-            domains={domains}
+            domains={[]}
           />
         </CardContent>
       </Card>
@@ -211,10 +245,55 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
       <Card>
         <CardHeader>
           <CardTitle>Runs Table</CardTitle>
-          <CardDescription>{sortedRows.length} rows</CardDescription>
+          <CardDescription>
+            Showing {rows.length} of {pageResult.total} rows
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <DataTable columns={columns} rows={sortedRows} getRowKey={(row) => row.run_id} emptyLabel="No runs match filters." />
+        <CardContent className="space-y-4">
+          <DataTable columns={columns} rows={rows} getRowKey={(row) => row.run_id} emptyLabel="No runs match filters." />
+          <div className="flex items-center justify-between gap-2 border-t pt-3">
+            <Button asChild variant="outline" size="sm" disabled={!hasPreviousPage}>
+              <Link
+                href={
+                  hasPreviousPage
+                    ? buildPageHref({
+                        status: statusFilter,
+                        severity: severityFilter,
+                        coverage: coverageFilter,
+                        sort: sortFilter,
+                        domain: domainFilter,
+                        page: pageResult.page - 1,
+                        pageSize: pageResult.pageSize,
+                      })
+                    : "#"
+                }
+                aria-disabled={!hasPreviousPage}
+              >
+                Previous
+              </Link>
+            </Button>
+            <p className="text-sm text-muted-foreground">Page size: {pageResult.pageSize}</p>
+            <Button asChild variant="outline" size="sm" disabled={!hasNextPage}>
+              <Link
+                href={
+                  hasNextPage
+                    ? buildPageHref({
+                        status: statusFilter,
+                        severity: severityFilter,
+                        coverage: coverageFilter,
+                        sort: sortFilter,
+                        domain: domainFilter,
+                        page: pageResult.page + 1,
+                        pageSize: pageResult.pageSize,
+                      })
+                    : "#"
+                }
+                aria-disabled={!hasNextPage}
+              >
+                Next
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

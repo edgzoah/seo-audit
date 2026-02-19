@@ -9,8 +9,10 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { readRun } from "../../../lib/audits/fs";
+import { getRunById } from "../../../lib/audits/repo";
 import { compactUrl, humanize } from "../../lib/format";
+
+export const dynamic = "force-dynamic";
 
 type SeverityRank = "error" | "warning" | "notice";
 
@@ -27,7 +29,7 @@ function normalizeSeverity(value: string | undefined): SeverityRank | "all" {
 export default async function AuditDetailPage({ params, searchParams }: AuditDetailPageProps) {
   const { runId } = await params;
   const query = searchParams ? await searchParams : undefined;
-  const report = await readRun(runId);
+  const report = await getRunById(runId);
 
   if (!report) notFound();
 
