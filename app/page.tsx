@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listRuns } from "../src/server/runs";
+import { listRuns } from "../lib/audits/fs";
 import { formatPercent } from "./lib/format";
 
 export default async function HomePage() {
