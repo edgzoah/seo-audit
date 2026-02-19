@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "./ui/card";
 
 interface PanelChildren {
   children: ReactNode;
@@ -10,24 +11,24 @@ interface PanelHeaderProps {
 }
 
 function Root({ children }: PanelChildren) {
-  return <section className="card panel audit-panel-root">{children}</section>;
+  return <Card className="audit-panel-root">{children}</Card>;
 }
 
 function Header({ title, meta }: PanelHeaderProps) {
   return (
-    <div className="panel-head audit-panel-header">
-      <h2>{title}</h2>
+    <CardHeader className="audit-panel-header">
+      <CardTitle>{title}</CardTitle>
       {meta ? <span>{meta}</span> : null}
-    </div>
+    </CardHeader>
   );
 }
 
 function Body({ children }: PanelChildren) {
-  return <div className="audit-panel-body">{children}</div>;
+  return <CardContent className="audit-panel-body">{children}</CardContent>;
 }
 
 function Footer({ children }: PanelChildren) {
-  return <div className="audit-panel-footer">{children}</div>;
+  return <CardFooter className="audit-panel-footer">{children}</CardFooter>;
 }
 
 export const AuditPanel = {

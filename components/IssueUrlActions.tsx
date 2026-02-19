@@ -1,6 +1,7 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
 
 interface IssueUrlActionsProps {
   url: string;
@@ -17,21 +18,23 @@ export function IssueUrlActions({ url }: IssueUrlActionsProps) {
 
   return (
     <TooltipProvider>
-      <span className="issue-actions">
+      <span className="inline-flex flex-wrap gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" className="issue-action-btn" onClick={copyUrl}>
+            <Button type="button" size="sm" variant="outline" onClick={copyUrl}>
               Copy URL
-            </button>
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Copy full URL</TooltipContent>
         </Tooltip>
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <a className="issue-action-btn" href={url} target="_blank" rel="noreferrer noopener">
-              Open page
-            </a>
+            <Button asChild size="sm" variant="secondary">
+              <a href={url} target="_blank" rel="noreferrer noopener">
+                Open page
+              </a>
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Open in new tab</TooltipContent>
         </Tooltip>
