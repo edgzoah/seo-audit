@@ -1,21 +1,25 @@
 "use client";
 
+import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import type { ReactNode } from "react";
 
-export function TooltipProvider({ children }: { children: ReactNode }) {
-  return <TooltipPrimitive.Provider delayDuration={120}>{children}</TooltipPrimitive.Provider>;
-}
+import { cn } from "../../lib/utils";
 
-export const Tooltip = TooltipPrimitive.Root;
-export const TooltipTrigger = TooltipPrimitive.Trigger;
+const TooltipProvider = TooltipPrimitive.Provider;
+const Tooltip = TooltipPrimitive.Root;
+const TooltipTrigger = TooltipPrimitive.Trigger;
 
-export function TooltipContent({ children }: { children: ReactNode }) {
-  return (
-    <TooltipPrimitive.Portal>
-      <TooltipPrimitive.Content className="ui-tooltip-content" sideOffset={6}>
-        {children}
-      </TooltipPrimitive.Content>
-    </TooltipPrimitive.Portal>
-  );
-}
+const TooltipContent = React.forwardRef<
+  React.ElementRef<typeof TooltipPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
+>(({ className, sideOffset = 4, ...props }, ref) => (
+  <TooltipPrimitive.Content
+    ref={ref}
+    sideOffset={sideOffset}
+    className={cn("z-50 overflow-hidden rounded-md bg-foreground px-3 py-1.5 text-xs text-background shadow-md", className)}
+    {...props}
+  />
+));
+TooltipContent.displayName = TooltipPrimitive.Content.displayName;
+
+export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger };
