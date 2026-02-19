@@ -15,7 +15,7 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 
 - Source of truth for this stage: `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Commit strategy: 1 step = max 1-2 commits.
-- Validation gate used after each commit: `npm run build` (pass), `npm run lint` (script missing).
+- Validation gates: `npm run build`, `npm run lint`, `npx tsc -p tsconfig.next.json --noEmit`.
 
 ## Requirement Mapping
 
@@ -26,6 +26,8 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Audit creator: `app/new/page.tsx`, `components/forms/NewAuditWizard.tsx`, `app/api/audits/run/route.ts`
 - Data layer: `lib/audits/fs.ts`, `lib/audits/types.ts`
 - shadcn-style UI layer: `components/ui/*`
+- App shell: `components/app-shell/AppShell.tsx`, `components/app-shell/AppSidebar.tsx`, `components/app-shell/AppTopbar.tsx`
+- Legacy redirect route: `app/runs/[runId]/page.tsx`
 
 ### TypeScript requirements
 - Union/intersection:
@@ -41,6 +43,11 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
   - `isReport(x: unknown): x is Report` in `lib/audits/fs.ts`
 - Generic reusable component:
   - `DataTable<T>` in `components/DataTable.tsx`
+- Domain components:
+  - `RunKpiCards` in `components/domain/RunKpiCards.tsx`
+  - `IssueTable` in `components/domain/IssueTable.tsx`
+  - `CompareSummary` in `components/domain/CompareSummary.tsx`
+  - `AuditWizard` in `components/domain/AuditWizard.tsx`
 
 ### RHF + Zod requirements
 - Zod schema validation: `lib/audits/new-audit-schema.ts`
@@ -79,11 +86,30 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
   - `components/charts/ScoreDeltaChart.tsx`
 
 ### Tailwind checklist equivalence (current CSS implementation)
-- Responsive layouts/media queries: `app/globals.css`
-- Hover/focus pseudo-classes: `app/globals.css`
-- Group/group-hover behavior: `.group:hover .issue-actions` in `app/globals.css`
-- Animation (run spinner): `.run-loader` + `@keyframes spin` in `app/globals.css`
-- Container concept: `.container` utility class in `app/globals.css`
+- Tailwind configuration: `tailwind.config.ts`, `postcss.config.js`, `components.json`
+- Tokenized style system (HSL CSS vars): `app/globals.css`
+- Responsive shell/layout via utility classes: `components/app-shell/*`, `app/*/page.tsx`
+- Hover/focus/active states via utility classes and shadcn primitives: `components/ui/*`
+- Subtle motion (120-180ms equivalent): `.subtle-enter` and component transitions
+- Animation (run spinner): `.run-loader` in `app/globals.css`
 
 ### Remaining gaps vs original checklist
-- Dedicated `/audits` detail route exists (`/audits/[runId]`), while legacy route `/runs/[runId]` is still present for backward compatibility.
+- None for this implementation scope.
+
+## Design System Usage
+
+- `Button`: `components/ui/button.tsx`
+- `Card`: `components/ui/card.tsx`
+- `Table`: `components/ui/table.tsx`
+- `Dialog`: `components/ui/dialog.tsx`
+- `DropdownMenu`: `components/ui/dropdown-menu.tsx`
+- `Popover`: `components/ui/popover.tsx`
+- `Tooltip`: `components/ui/tooltip.tsx`
+- `Badge`: `components/ui/badge.tsx`
+- `Tabs`: `components/ui/tabs.tsx`
+- `Separator`: `components/ui/separator.tsx`
+- `Input`: `components/ui/input.tsx`
+- `Select`: `components/ui/select.tsx`
+- `Textarea`: `components/ui/textarea.tsx`
+- `Sheet`: `components/ui/sheet.tsx`
+- `Skeleton`: `components/ui/skeleton.tsx`
