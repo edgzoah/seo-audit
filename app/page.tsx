@@ -24,7 +24,7 @@ export default async function HomePage() {
           </div>
           <div className="kpi-tile">
             <span>Latest score</span>
-            <strong>{formatPercent(recent?.scoreTotal)}</strong>
+            <strong>{formatPercent(recent?.summary.score_total)}</strong>
           </div>
         </div>
       </section>
@@ -32,7 +32,9 @@ export default async function HomePage() {
       <section className="card panel">
         <div className="panel-head">
           <h2>Recent Runs</h2>
-          <span>{runs.length} items</span>
+          <span>
+            {runs.length} items • <Link href="/audits">Open audits table</Link>
+          </span>
         </div>
         <table className="table">
           <thead>
@@ -47,17 +49,17 @@ export default async function HomePage() {
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr key={run.runId}>
+              <tr key={run.run_id}>
                 <td>
-                  <Link className="run-link" href={`/runs/${run.runId}`}>
-                    {run.runId}
+                  <Link className="run-link" href={`/runs/${run.run_id}`}>
+                    {run.run_id}
                   </Link>
                 </td>
-                <td>{run.target ?? "-"}</td>
-                <td>{formatPercent(run.scoreTotal)}</td>
-                <td>{run.pagesCrawled ?? "-"}</td>
-                <td>{run.warnings ?? "-"}</td>
-                <td>{run.notices ?? "-"}</td>
+                <td>{run.inputs.target || "-"}</td>
+                <td>{formatPercent(run.summary.score_total)}</td>
+                <td>{run.summary.pages_crawled ?? "-"}</td>
+                <td>{run.summary.warnings ?? "-"}</td>
+                <td>{run.summary.notices ?? "-"}</td>
               </tr>
             ))}
           </tbody>

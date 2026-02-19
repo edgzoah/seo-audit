@@ -4,16 +4,7 @@ import path from "node:path";
 import { validateReport } from "../../src/report/report-schema";
 import type { Report } from "./types";
 
-export interface RunSummary {
-  runId: string;
-  target: string | null;
-  coverage: Report["inputs"]["coverage"] | null;
-  startedAt: string | null;
-  scoreTotal: number | null;
-  pagesCrawled: number | null;
-  warnings: number | null;
-  notices: number | null;
-}
+export type RunSummary = Pick<Report, "run_id" | "started_at" | "summary" | "inputs">;
 
 const RUNS_DIR = path.join(process.cwd(), "runs");
 
@@ -72,36 +63,8 @@ export async function listRuns(limit = 30): Promise<RunSummary[]> {
     .sort(compareRunIdsDesc)
     .slice(0, limit);
 
-  const runs = await Promise.all(
-    runIds.map(async (runId): Promise<RunSummary> => {
-      const report = await readRun(runId);
-      if (!report) {
-        return {
-          runId,
-          target: null,
-          coverage: null,
-          startedAt: null,
-          scoreTotal: null,
-          pagesCrawled: null,
-          warnings: null,
-          notices: null,
-        };
-      }
-
-      return {
-        runId,
-        target: report.inputs.target,
-        coverage: report.inputs.coverage,
-        startedAt: report.started_at,
-        scoreTotal: report.summary.score_total,
-        pagesCrawled: report.summary.pages_crawled,
-        warnings: report.summary.warnings,
-        notices: report.summary.notices,
-      };
-    }),
-  );
-
-  return runs;
+  const reports = await Promise.all(runIds.map((runId) => readRun(runId)));
+  return reports.filter((report): report is Report => report !== null);
 }
 
 export async function listDiffCandidates(): Promise<string[]> {

@@ -555,6 +555,117 @@ details summary {
   font-weight: 700;
 }
 
+.audits-filters {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.7rem;
+  align-items: end;
+}
+
+.audits-filters label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.audits-filters label span {
+  font-size: 0.77rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.audits-filters select {
+  border: 1px solid #cfe0f6;
+  border-radius: 9px;
+  background: #fbfdff;
+  color: var(--text);
+  padding: 0.5rem 0.58rem;
+}
+
+.audits-filters select:focus,
+.btn-primary:focus {
+  outline: 2px solid #6ca9ef;
+  outline-offset: 1px;
+}
+
+.btn-primary {
+  border: 1px solid #0f5bbc;
+  border-radius: 9px;
+  background: linear-gradient(120deg, #0f64ce, #0d4ea2);
+  color: #fff;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 0.45rem 0.66rem;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.data-table tbody tr:hover {
+  background: #f6fafe;
+}
+
+.data-table tbody tr:focus-within {
+  background: #ecf4ff;
+}
+
+.audit-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.16rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.audit-status-healthy {
+  color: #0d6d4a;
+  border-color: #b7e4d4;
+  background: #ecfcf6;
+}
+
+.audit-status-watch {
+  color: #835700;
+  border-color: #eed9ac;
+  background: #fff8eb;
+}
+
+.audit-status-critical {
+  color: #8f1c15;
+  border-color: #eec2bd;
+  background: #fff3f2;
+}
+
+.data-cards {
+  display: none;
+}
+
+.data-card {
+  border: 1px solid #d7e4f5;
+  border-radius: 12px;
+  background: var(--surface-2);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.data-card-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
+.data-card-row > span {
+  font-size: 0.77rem;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 @media (max-width: 1180px) {
   .kpi-ribbon {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -599,6 +710,10 @@ details summary {
   .score-gauge {
     flex: 1;
   }
+
+  .audits-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 740px) {
@@ -613,5 +728,18 @@ details summary {
 
   .table {
     font-size: 0.92rem;
+  }
+
+  .audits-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .data-table {
+    display: none;
+  }
+
+  .data-cards {
+    display: grid;
+    gap: 0.65rem;
   }
 }

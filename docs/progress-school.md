@@ -4,7 +4,7 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 
 - [x] STEP 0 - Create branch and baseline (`next-dashboard`)
 - [x] STEP 1 - Data access layer (server-side)
-- [ ] STEP 2 - Audit list page (`/audits`)
+- [x] STEP 2 - Audit list page (`/audits`)
 - [ ] STEP 3 - Audit detail page (`/audits/[runId]`)
 - [ ] STEP 4 - Comparison page (`/compare`)
 - [ ] STEP 5 - Audit creator (`/new`)
