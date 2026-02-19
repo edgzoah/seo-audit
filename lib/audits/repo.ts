@@ -229,7 +229,11 @@ export async function getDiff(baselineId: string, currentId: string): Promise<Di
 
   if (stored[0]) {
     logQueryDuration("getDiff(stored)", started);
-    return stored[0].diffJson;
+    const diff = stored[0].diffJson;
+    if (typeof diff === "string") {
+      return JSON.parse(diff) as DiffReport;
+    }
+    return diff;
   }
 
   const [baseline, current] = await Promise.all([getRunById(baselineId), getRunById(currentId)]);
@@ -260,7 +264,7 @@ export async function upsertRunFromReport(report: Report): Promise<void> {
     `INSERT INTO "AuditRun" (
       "runId", "target", "domain", "coverage", "startedAt", "finishedAt", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices", "status", "summaryJson", "reportJson"
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
     )
     ON CONFLICT ("runId") DO UPDATE SET
       "target" = EXCLUDED."target",
@@ -290,8 +294,8 @@ export async function upsertRunFromReport(report: Report): Promise<void> {
       report.summary.warnings,
       report.summary.notices,
       status,
-      JSON.stringify(report.summary),
-      JSON.stringify(report),
+      db.json(report.summary as unknown as never),
+      db.json(report as unknown as never),
     ],
   );
 }
@@ -302,9 +306,9 @@ export async function upsertDiffReport(diff: DiffReport): Promise<void> {
 
   await db.unsafe(
     `INSERT INTO "AuditDiff" ("baselineRunId", "currentRunId", "diffJson")
-     VALUES ($1, $2, $3::jsonb)
+     VALUES ($1, $2, $3)
      ON CONFLICT ("baselineRunId", "currentRunId")
      DO UPDATE SET "diffJson" = EXCLUDED."diffJson"`,
-    [diff.baseline_run_id, diff.current_run_id, JSON.stringify(diff)],
+    [diff.baseline_run_id, diff.current_run_id, db.json(diff as unknown as never)],
   );
 }

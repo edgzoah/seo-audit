@@ -159,6 +159,10 @@ function trimText(value: string, maxChars: number): string {
   return normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…";
 }
 
+function normalizeAnchorText(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function sanitizeContextPayload(input: {
   report: Report;
   provider: LlmProvider;
@@ -275,7 +279,7 @@ function parseJsonLoose(raw: string): unknown {
   }
 }
 
-function toActionArray(value: unknown, limits: OutputLimits): Action[] {
+function toActionArray(value: unknown, limits: OutputLimits, validIssueIds: Set<string>): Action[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -289,8 +293,13 @@ function toActionArray(value: unknown, limits: OutputLimits): Action[] {
     const impact = record.impact === "high" || record.impact === "medium" || record.impact === "low" ? record.impact : null;
     const effort = record.effort === "high" || record.effort === "medium" || record.effort === "low" ? record.effort : null;
     const rationale = typeof record.rationale === "string" ? trimText(record.rationale, limits.maxRationaleChars) : null;
-    if (title && impact && effort && rationale) {
-      parsed.push({ title, impact, effort, rationale });
+    const issueIdsFromArray = Array.isArray(record.issue_ids)
+      ? record.issue_ids.filter((id): id is string => typeof id === "string" && validIssueIds.has(id))
+      : [];
+    const issueIdSingle = typeof record.issue_id === "string" && validIssueIds.has(record.issue_id) ? [record.issue_id] : [];
+    const issueIds = Array.from(new Set([...issueIdsFromArray, ...issueIdSingle]));
+    if (title && impact && effort && rationale && issueIds.length > 0) {
+      parsed.push({ title, impact, effort, rationale, issue_ids: issueIds });
     }
   }
   return parsed.slice(0, limits.maxPrioritizedActions);
@@ -344,12 +353,53 @@ function toStringArray(value: unknown, maxItems: number, maxChars = 180): string
     .slice(0, maxItems);
 }
 
-function toProposedPacks(value: unknown): LlmProposalPacks | undefined {
+function toProposedPacks(input: { value: unknown; report: Report }): LlmProposalPacks | undefined {
+  const value = input.value;
   if (!value || typeof value !== "object") {
     return undefined;
   }
   const root = value as Record<string, unknown>;
   const packs: LlmProposalPacks = {};
+  const focusUrl = normalizeUrl(input.report.summary.focus?.primary_url ?? null);
+  const existingFocusLinksBySource = new Map<
+    string,
+    {
+      hasNonNavLinkToFocus: boolean;
+      anchors: Set<string>;
+    }
+  >();
+
+  if (focusUrl && input.report.page_extracts) {
+    for (const page of input.report.page_extracts) {
+      const sourceUrl = normalizeUrl(page.final_url) ?? normalizeUrl(page.url);
+      if (!sourceUrl) {
+        continue;
+      }
+      for (const outlink of page.outlinksInternal) {
+        let targetUrl: string | null = null;
+        try {
+          targetUrl = new URL(outlink.targetUrl, page.final_url).toString();
+        } catch {
+          targetUrl = normalizeUrl(outlink.targetUrl);
+        }
+        if (targetUrl !== focusUrl) {
+          continue;
+        }
+        const normalizedAnchor = normalizeAnchorText(outlink.anchorText);
+        const current = existingFocusLinksBySource.get(sourceUrl) ?? {
+          hasNonNavLinkToFocus: false,
+          anchors: new Set<string>(),
+        };
+        if (!outlink.isNavLikely) {
+          current.hasNonNavLinkToFocus = true;
+        }
+        if (normalizedAnchor.length > 0) {
+          current.anchors.add(normalizedAnchor);
+        }
+        existingFocusLinksBySource.set(sourceUrl, current);
+      }
+    }
+  }
 
   const serp = root.focus_serp_pack as Record<string, unknown> | undefined;
   if (serp && typeof serp === "object") {
@@ -419,6 +469,31 @@ function toProposedPacks(value: unknown): LlmProposalPacks | undefined {
           suggestedSentenceContext: trimText(typeof item.suggestedSentenceContext === "string" ? item.suggestedSentenceContext : "", 220),
         }))
         .filter((item) => item.sourceUrl.length > 0 && item.suggestedAnchor.length > 0)
+        .filter((item, index, array) => {
+          const sourceUrl = normalizeUrl(item.sourceUrl);
+          if (!sourceUrl) {
+            return false;
+          }
+          const normalizedAnchor = normalizeAnchorText(item.suggestedAnchor);
+          if (normalizedAnchor.length === 0) {
+            return false;
+          }
+          const existingForSource = focusUrl ? existingFocusLinksBySource.get(sourceUrl) : undefined;
+          // If source already has a non-nav link to focus URL, skip additional suggestion from LLM.
+          if (existingForSource?.hasNonNavLinkToFocus) {
+            return false;
+          }
+          // If only nav links exist, at least avoid repeating the same anchor text.
+          if (existingForSource?.anchors.has(normalizedAnchor)) {
+            return false;
+          }
+          // Remove duplicates suggested by LLM in the same plan.
+          return array.findIndex((candidate) => {
+            const candidateSource = normalizeUrl(candidate.sourceUrl);
+            const candidateAnchor = normalizeAnchorText(candidate.suggestedAnchor);
+            return candidateSource === sourceUrl && candidateAnchor === normalizedAnchor;
+          }) === index;
+        })
         .slice(0, 10)
     : [];
   if (internalLinkPlan.length > 0) {
@@ -493,10 +568,12 @@ function normalizeLlmOutput(input: {
           validPageUrls,
         });
 
-  const prioritizedActions = toActionArray(record.prioritized_actions, input.limits);
-  const prioritizedActionsAlt = prioritizedActions.length > 0 ? prioritizedActions : toActionArray(record.prioritizedActions, input.limits);
-  const prioritizedActionsFinal = prioritizedActionsAlt.length > 0 ? prioritizedActionsAlt : toActionArray(record.global_actions, input.limits);
-  const proposedPacks = toProposedPacks(record.proposed_packs);
+  const prioritizedActions = toActionArray(record.prioritized_actions, input.limits, validIssueIds);
+  const prioritizedActionsAlt =
+    prioritizedActions.length > 0 ? prioritizedActions : toActionArray(record.prioritizedActions, input.limits, validIssueIds);
+  const prioritizedActionsFinal =
+    prioritizedActionsAlt.length > 0 ? prioritizedActionsAlt : toActionArray(record.global_actions, input.limits, validIssueIds);
+  const proposedPacks = toProposedPacks({ value: record.proposed_packs, report: input.report });
 
   return {
     proposed_fixes: proposedFixesFinal,
@@ -541,7 +618,10 @@ function buildMainPrompt(input: {
     `- Generate up to ${input.outputLimits.maxPrioritizedActions} prioritized_actions.`,
     `- Keep each rationale <= ${input.outputLimits.maxRationaleChars} chars.`,
     "- Use only payload evidence and issue/page mapping.",
+    "- Every prioritized_actions item must include issue_ids with at least one valid issue id from payload. Example: [\"excessive_nav_only_inlinks\"].",
     "- Include structured packs in proposed_packs when evidence is sufficient.",
+    "- For proposed_packs.internal_link_plan: do not propose source URLs that already have a non-nav internal link to the focus URL.",
+    "- For proposed_packs.internal_link_plan: if only nav links exist, do not repeat an already-used anchor.",
     "- Do not fabricate metrics or claim fixed Google length requirements.",
     "- Keep schema suggestions consistent with visible page content only.",
     "",
@@ -568,7 +648,7 @@ function buildMainPrompt(input: {
     '    "cannibalization_flags": [{ "pageA": "string", "pageB": "string", "differentiationApproach": "string" }]',
     "  },",
     '  "prioritized_actions": [',
-    '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string" }',
+    '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string", "issue_ids": ["string"] }',
     "  ]",
     "}",
     "",
@@ -604,7 +684,7 @@ function buildRepairPrompt(input: {
     '    "cannibalization_flags": []',
     "  },",
     '  "prioritized_actions": [',
-    '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string" }',
+    '    { "title": "string", "impact": "high|medium|low", "effort": "high|medium|low", "rationale": "string", "issue_ids": ["string"] }',
     "  ]",
     "}",
     "",

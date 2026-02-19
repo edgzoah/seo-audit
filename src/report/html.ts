@@ -40,6 +40,10 @@ function compactUrl(value: string): string {
   }
 }
 
+function issueFragmentId(issueId: string): string {
+  return `issue-${issueId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
 function renderUrlItems(urls: string[], limit = 8): string {
   const preview = urls.slice(0, limit);
   const rest = Math.max(0, urls.length - limit);
@@ -72,7 +76,7 @@ function renderIssue(issue: Issue): string {
   const tags = issue.tags.map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join("");
 
   return `
-    <article class="issue-card ${severityClass(issue.severity)}">
+    <article class="issue-card ${severityClass(issue.severity)}" id="${escapeHtml(issueFragmentId(issue.id))}">
       <div class="issue-headline">
         <div>
           <h3>${escapeHtml(issue.title)}</h3>
@@ -116,15 +120,24 @@ export function renderReportHtml(report: Report): string {
 
   const actions = (report.prioritized_actions ?? [])
     .map(
-      (action) => `
+      (action) => {
+        const issueRefs = (action.issue_ids ?? [])
+          .map(
+            (issueId) =>
+              `<a class="chip chip-link" href="#${escapeHtml(issueFragmentId(issueId))}" title="${escapeHtml(issueId)}">${escapeHtml(issueId)}</a>`,
+          )
+          .join("");
+        return `
       <li class="action-card">
         <div class="row">
           <strong>${escapeHtml(action.title)}</strong>
           <span class="chip">${escapeHtml(action.impact.toUpperCase())} impact</span>
         </div>
         <span class="dim">effort: ${escapeHtml(action.effort)}</span>
+        <div class="chip-row">${issueRefs || "<span class=\"chip\">missing_issue_refs</span>"}</div>
         <p>${escapeHtml(action.rationale)}</p>
-      </li>`,
+      </li>`;
+      },
     )
     .join("");
 
@@ -357,6 +370,13 @@ export function renderReportHtml(report: Report): string {
         padding: 3px 8px;
         font-size: 0.78rem;
         background: #f8fafc;
+      }
+      .chip-link {
+        text-decoration: none;
+      }
+      .chip-link:hover {
+        border-color: #9bb6d8;
+        background: #eef4fb;
       }
       .issue-list { display: grid; gap: 10px; }
       .issue-card {

@@ -7,10 +7,9 @@ import { IssueTable } from "../../../components/domain/IssueTable";
 import { RunKpiCards } from "../../../components/domain/RunKpiCards";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
+import { Card, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { getRunById } from "../../../lib/audits/repo";
-import { compactUrl, humanize } from "../../lib/format";
+import { compactUrl } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -59,57 +58,24 @@ export default async function AuditDetailPage({ params, searchParams }: AuditDet
 
       <RunKpiCards summary={report.summary} />
 
-      <Tabs defaultValue="issues" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="issues">Issue Browser</TabsTrigger>
-          <TabsTrigger value="focus">Focus</TabsTrigger>
-        </TabsList>
+      <AuditPanel.Root>
+        <AuditPanel.Header title="Filters" />
+        <AuditPanel.Body>
+          <div className="space-y-3">
+            <IssueFilters defaults={{ category: categoryFilter, severity: severityFilter }} categories={categories} />
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/audits">Back to audits</Link>
+            </Button>
+          </div>
+        </AuditPanel.Body>
+      </AuditPanel.Root>
 
-        <TabsContent value="issues" className="space-y-4">
-          <AuditPanel.Root>
-            <AuditPanel.Header title="Filters" />
-            <AuditPanel.Body>
-              <div className="space-y-3">
-                <IssueFilters defaults={{ category: categoryFilter, severity: severityFilter }} categories={categories} />
-                <Button asChild variant="ghost" size="sm">
-                  <Link href="/audits">Back to audits</Link>
-                </Button>
-              </div>
-            </AuditPanel.Body>
-          </AuditPanel.Root>
-
-          <AuditPanel.Root>
-            <AuditPanel.Header title={`Issues (${filteredIssues.length})`} />
-            <AuditPanel.Body>
-              <IssueTable issues={filteredIssues} />
-            </AuditPanel.Body>
-          </AuditPanel.Root>
-        </TabsContent>
-
-        <TabsContent value="focus" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Focus Context</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {report.summary.focus ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-md border p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Primary URL</p>
-                    <p className="mt-1 text-sm">{compactUrl(report.summary.focus.primary_url)}</p>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Focus Score</p>
-                    <p className="mt-1 text-sm">{report.summary.focus.focus_score.toFixed(1)}%</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No focus object in this run.</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <AuditPanel.Root>
+        <AuditPanel.Header title={`Issues (${filteredIssues.length})`} />
+        <AuditPanel.Body>
+          <IssueTable issues={filteredIssues} />
+        </AuditPanel.Body>
+      </AuditPanel.Root>
     </div>
   );
 }

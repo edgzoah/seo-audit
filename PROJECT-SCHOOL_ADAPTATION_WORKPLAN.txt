@@ -1,0 +1,174 @@
+GOAL
+Adapt the existing SEO audit CLI + Next.js audit viewer into a single “SEO Audit Dashboard” matching the school project requirements (TypeScript + React + forms + validation + UI components). Ignore deployment and external generators.
+
+BRANCH
+Create and work on a new git branch:
+- branch name: next-dashboard
+
+ASSUMPTIONS
+- CLI already writes audits to runs/<run-id>/report.json (+ optional diff.json).
+- Next.js app already reads runs/ and renders audits.
+
+NON-GOALS (THIS STAGE)
+- No Vercel/deploy work.
+- No v0.app / lovable integration.
+- No new “auto-fix” system in CLI yet (only better presentation + inputs + orchestration).
+
+DELIVERABLES
+1) Next.js provides:
+   - Audit list view (table + filters + sorting).
+   - Audit detail view (issue browser + evidence).
+   - Audit comparison view (diff between two runs).
+   - Audit creator (multi-step form) that runs the CLI and creates a new run.
+2) TypeScript requirements evidenced in code:
+   - union + intersection types
+   - utility types (Pick/Omit/Record/Partial/Required)
+   - function overloads
+   - type predicate (value is Type)
+   - generic reusable component
+3) React Hook Form + Zod requirements:
+   - zod schema validation
+   - multi-step form
+   - custom form control connected to RHF
+   - regex + refine validation rules
+4) shadcn/ui usage:
+   - Table, Card, Dialog/AlertDialog, Tooltip/Popover/DropdownMenu
+   - at least one chart (Recharts)
+   - one custom compound component (Root/Header/Body/Footer)
+5) Tailwind checklist evidenced:
+   - media queries (responsive layout)
+   - pseudo-classes (hover/focus/active)
+   - container utility
+   - group + group-hover
+   - animation (loader/progress)
+   - container query usage in at least one component
+
+HIGH-LEVEL IMPLEMENTATION STEPS (ORDER)
+STEP 0 — Create branch and baseline
+- git checkout -b next-dashboard
+- ensure Next.js dev server runs and current pages work
+- add docs/progress-school.md with a checklist mirroring tasks below
+
+STEP 1 — Data access layer (server-side)
+Goal: deterministic, typed read of runs/ folder.
+- Create server utility:
+  - listRuns(): reads runs/*/report.json and returns minimal summaries
+  - readRun(runId): returns full Report
+  - listDiffCandidates(): all run ids
+  - readDiff(baselineId, currentId) or read stored diff.json if already generated
+TypeScript:
+- Add type predicate:
+  - isReport(x: unknown): x is Report
+- Add function overloads:
+  - loadReport(runId: string): Promise<Report>
+  - loadReport(runId: string, opts: { raw: true }): Promise<string>
+
+STEP 2 — Audit list page (Table + filters + sorting)
+Route: /audits
+UI:
+- shadcn Table + Card wrapper
+- filters panel (status/severity/coverage/domain) + sort dropdown
+Tailwind:
+- responsive table (stacked cards on small screens)
+- hover/focus states on rows and buttons
+TypeScript:
+- Generic DataTable<T> component:
+  - columns typed as generic definitions
+- Utility types:
+  - type AuditRow = Pick<Report, "run_id" | "started_at" | "summary" | "inputs">
+
+STEP 3 — Audit detail page (Issue browser)
+Route: /audits/[runId]
+UI:
+- Summary cards (scores, counts, focus)
+- Issues table with:
+  - severity badges
+  - category filter
+  - evidence drawer/dialog
+- Use Tooltip/Popover for evidence previews
+Tailwind:
+- group-hover reveal actions (copy URL, open page)
+TypeScript:
+- Intersection type for decorated issues:
+  - type IssueView = Issue & { sortKey: string; affectedCount: number }
+
+STEP 4 — Comparison page (Diff)
+Route: /compare?baseline=<id>&current=<id>
+UI:
+- selector for baseline/current (DropdownMenu)
+- show score delta + resolved/new/regressed issues
+- Chart (Recharts) for category score deltas OR time-series if multiple runs exist
+TypeScript:
+- Record utility type:
+  - Record<Category, number> for score maps
+
+STEP 5 — Audit creator (Multi-step RHF + Zod)
+Route: /new
+Multi-step form:
+- Step 1: Target (URL)
+- Step 2: Scope (coverage, max_pages, depth, include/exclude)
+- Step 3: Focus (primary_url, keyword, goal, constraints)
+- Step 4: Run (review + confirm dialog)
+Validation (Zod):
+- URL regex + refine:
+  - must be https://
+  - focus URL must share origin with target
+Custom RHF control:
+- CoverageModeToggle (quick/surface/full) as a custom component integrated with RHF Controller
+Server action/API:
+- triggers CLI command `seo-audit audit ...` with inputs
+- captures run-id and navigates to /audits/[runId]
+Tailwind:
+- animation on “running” state (spinner/progress)
+
+STEP 6 — Compound component (custom UI)
+Create compound component used in detail and compare views:
+- AuditPanel.Root
+- AuditPanel.Header
+- AuditPanel.Body
+- AuditPanel.Footer
+Use Tailwind container queries inside AuditPanel to change layout based on panel width.
+
+STEP 7 — Code quality pass + mapping to requirements
+- Ensure every requirement is present with a clear reference in code.
+- Update docs/progress-school.md with file paths where each requirement is implemented.
+
+CLI INTEGRATION CONTRACT
+The Next.js “Run audit” action must:
+- write inputs to a temp file (inputs.json) or pass CLI args
+- run: `seo-audit audit <target> --coverage ... --max-pages ... --depth ... --format json` (or your current flags)
+- wait for completion
+- read the newly created run folder
+- return run_id
+Failure handling:
+- show shadcn AlertDialog with error text from stderr
+- do not crash the app
+
+FILES TO CREATE/TOUCH (TARGET)
+- app/audits/page.tsx
+- app/audits/[runId]/page.tsx
+- app/compare/page.tsx
+- app/new/page.tsx
+- lib/audits/fs.ts (read runs)
+- lib/audits/types.ts (re-export Report types if needed)
+- components/DataTable.tsx (generic)
+- components/AuditPanel.tsx (compound)
+- components/forms/CoverageModeToggle.tsx (custom RHF control)
+- components/charts/ScoreDeltaChart.tsx
+- docs/progress-school.md
+
+COMMIT STRATEGY
+- 1 step = 1–2 commits max
+- commit messages:
+  - feat(audits): list view
+  - feat(audits): detail view
+  - feat(compare): diff view
+  - feat(new): multi-step audit creator
+  - feat(ui): AuditPanel compound component
+  - chore(docs): progress mapping
+
+START NOW
+1) Create branch next-dashboard.
+2) Implement STEP 1 (data access layer + type predicate + overloads).
+3) Commit + push.
+Then proceed step-by-step in order.

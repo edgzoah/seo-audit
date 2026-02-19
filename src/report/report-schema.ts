@@ -201,6 +201,7 @@ export interface Action {
   impact: "high" | "medium" | "low";
   effort: "high" | "medium" | "low";
   rationale: string;
+  issue_ids?: string[];
 }
 
 export interface ProposedFix {

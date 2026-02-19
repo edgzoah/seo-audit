@@ -15,7 +15,18 @@ import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 import { CoverageModeToggle } from "./CoverageModeToggle";
 
-const STEPS = ["Target", "Scope", "Focus", "Run"] as const;
+const STEPS = ["Target", "Scope", "Run"] as const;
+const POLL_INTERVAL_MS = 2000;
+
+async function readBody(response: Response): Promise<{ data: Record<string, unknown> | null; text: string }> {
+  const text = await response.text();
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return { data: parsed, text };
+  } catch {
+    return { data: null, text };
+  }
+}
 
 function splitByCommaOrLine(value: string): string[] {
   return value
@@ -28,22 +39,24 @@ export function NewAuditWizard() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobLogTail, setJobLogTail] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<NewAuditInput>({
     resolver: zodResolver(newAuditSchema),
     defaultValues: {
       target: "",
-      coverage: "surface",
-      max_pages: 100,
-      depth: 3,
+      coverage: "quick",
+      max_pages: 20,
+      depth: 1,
       include_patterns: [],
       exclude_patterns: [],
+      constraints: [],
       primary_url: "",
       keyword: "",
       goal: "",
-      constraints: [],
     },
     mode: "onChange",
   });
@@ -55,7 +68,6 @@ export function NewAuditWizard() {
     setSubmitError(null);
     if (step === 0 && !(await form.trigger(["target"]))) return;
     if (step === 1 && !(await form.trigger(["coverage", "max_pages", "depth"]))) return;
-    if (step === 2 && !(await form.trigger(["primary_url", "keyword", "goal"]))) return;
     setStep((current) => Math.min(current + 1, STEPS.length - 1));
   }
 
@@ -67,12 +79,13 @@ export function NewAuditWizard() {
   async function confirmRun(): Promise<void> {
     const valid = await form.trigger();
     if (!valid) {
-      setShowConfirm(false);
       return;
     }
 
     setIsRunning(true);
     setSubmitError(null);
+    setJobLogTail(null);
+    setJobId(null);
     try {
       const response = await fetch("/api/audits/run", {
         method: "POST",
@@ -80,14 +93,57 @@ export function NewAuditWizard() {
         body: JSON.stringify(form.getValues()),
       });
 
-      const result = (await response.json()) as { runId?: string; error?: string };
-      if (!response.ok || !result.runId) throw new Error(result.error ?? "Audit failed.");
-      router.push(`/audits/${result.runId}`);
+      const startBody = await readBody(response);
+      const startResult = (startBody.data ?? {}) as { jobId?: string; status?: string; error?: string };
+      if (!response.ok || !startResult.jobId) {
+        throw new Error(startResult.error ?? (startBody.text.slice(0, 200) || "Audit failed to start."));
+      }
+
+      setJobId(startResult.jobId);
+      setRunStatus(startResult.status ?? "queued");
+
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        const poll = await fetch(`/api/audits/run/${startResult.jobId}`, { cache: "no-store" });
+        const pollBody = await readBody(poll);
+        const state = ((pollBody.data ?? {}) as {
+          status?: "queued" | "running" | "succeeded" | "failed";
+          runId?: string;
+          error?: string;
+          logs?: {
+            stdoutTail?: string;
+            stderrTail?: string;
+          };
+        });
+
+        if (!poll.ok) {
+          throw new Error(state.error ?? (pollBody.text.slice(0, 200) || "Could not fetch audit job status."));
+        }
+
+        if (state.status) {
+          setRunStatus(state.status);
+        }
+        setJobLogTail(state.logs?.stderrTail?.trim() || state.logs?.stdoutTail?.trim() || null);
+
+        if (state.status === "succeeded" && state.runId) {
+          router.push(`/audits/${state.runId}`);
+          return;
+        }
+
+        if (state.status === "failed") {
+          const debugTail = state.logs?.stderrTail?.trim() || state.logs?.stdoutTail?.trim();
+          if (debugTail) {
+            throw new Error(`${state.error ?? "Audit failed."}\n\n${debugTail}`);
+          }
+          throw new Error(state.error ?? "Audit failed.");
+        }
+      }
+
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsRunning(false);
-      setShowConfirm(false);
+      setRunStatus(null);
     }
   }
 
@@ -148,41 +204,20 @@ export function NewAuditWizard() {
 
         {step === 2 ? (
           <section className="space-y-3">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Focus URL</p>
-              <Input placeholder="https://example.com/pricing" {...form.register("primary_url")} />
-              {form.formState.errors.primary_url ? <p className="text-sm text-rose-600">{form.formState.errors.primary_url.message}</p> : null}
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Primary keyword</p>
-              <Input placeholder="enterprise seo audit" {...form.register("keyword")} />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Goal</p>
-              <Input placeholder="Improve conversion-driven pages" {...form.register("goal")} />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Constraints</p>
-              <Textarea rows={3} onChange={(e) => form.setValue("constraints", splitByCommaOrLine(e.target.value))} />
-            </div>
-          </section>
-        ) : null}
-
-        {step === 3 ? (
-          <section className="space-y-3">
             <p className="text-sm font-medium">Review</p>
             <div className="grid gap-2 rounded-md border p-3 text-sm md:grid-cols-2">
               <p><b>Target:</b> {values.target}</p>
               <p><b>Coverage:</b> {values.coverage}</p>
               <p><b>Max pages:</b> {values.max_pages}</p>
               <p><b>Depth:</b> {values.depth}</p>
-              <p><b>Focus URL:</b> {values.primary_url || "none"}</p>
-              <p><b>Keyword:</b> {values.keyword || "none"}</p>
             </div>
-            <Button type="button" onClick={() => setShowConfirm(true)} disabled={isRunning}>
+            <Button type="button" onClick={confirmRun} disabled={isRunning}>
               {isRunning ? "Running..." : "Run audit"}
             </Button>
             {isRunning ? <div className="run-loader" aria-label="Audit running" /> : null}
+            {isRunning && runStatus ? <p className="text-sm text-muted-foreground">Status: {runStatus}</p> : null}
+            {isRunning && jobId ? <p className="text-xs text-muted-foreground">Job ID: {jobId}</p> : null}
+            {isRunning && jobLogTail ? <pre className="max-h-40 overflow-auto rounded border bg-muted/40 p-2 text-xs">{jobLogTail}</pre> : null}
           </section>
         ) : null}
 
@@ -204,18 +239,6 @@ export function NewAuditWizard() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm run</DialogTitle>
-            <DialogDescription>Start a new audit now?</DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setShowConfirm(false)}>Cancel</Button>
-            <Button type="button" onClick={confirmRun} disabled={isRunning}>Confirm</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }

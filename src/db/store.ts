@@ -28,7 +28,7 @@ export async function upsertAuditRun(report: Report): Promise<void> {
     `INSERT INTO "AuditRun" (
       "runId", "target", "domain", "coverage", "startedAt", "finishedAt", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices", "status", "summaryJson", "reportJson"
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
     )
     ON CONFLICT ("runId") DO UPDATE SET
       "target" = EXCLUDED."target",
@@ -58,8 +58,8 @@ export async function upsertAuditRun(report: Report): Promise<void> {
       report.summary.warnings,
       report.summary.notices,
       status,
-      JSON.stringify(report.summary),
-      JSON.stringify(report),
+      db.json(report.summary as unknown as never),
+      db.json(report as unknown as never),
     ],
   );
 }
@@ -75,7 +75,15 @@ export async function getAuditReportByRunId(runId: string): Promise<Report | nul
   const row = rows[0];
   if (!row) return null;
 
-  const reportCandidate = row.reportJson as unknown;
+  const reportCandidate = (() => {
+    if (typeof row.reportJson !== "string") return row.reportJson;
+    try {
+      return JSON.parse(row.reportJson) as unknown;
+    } catch {
+      return row.reportJson;
+    }
+  })();
+
   if (!validateReport(reportCandidate).valid) {
     throw new Error(`Invalid report payload in DB for run: ${runId}`);
   }
@@ -88,10 +96,10 @@ export async function upsertAuditDiff(diff: DiffReport): Promise<void> {
 
   await db.unsafe(
     `INSERT INTO "AuditDiff" ("baselineRunId", "currentRunId", "diffJson")
-     VALUES ($1, $2, $3::jsonb)
+     VALUES ($1, $2, $3)
      ON CONFLICT ("baselineRunId", "currentRunId")
      DO UPDATE SET "diffJson" = EXCLUDED."diffJson"`,
-    [diff.baseline_run_id, diff.current_run_id, JSON.stringify(diff)],
+    [diff.baseline_run_id, diff.current_run_id, db.json(diff as unknown as never)],
   );
 }
 

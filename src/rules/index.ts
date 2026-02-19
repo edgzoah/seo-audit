@@ -70,6 +70,10 @@ const SECTION_KEYWORDS = {
 
 const HTTP_STATUS_CONCURRENCY = 12;
 const REDIRECT_CHAIN_CONCURRENCY = 8;
+const TITLE_SOFT_MAX = 60;
+const TITLE_HARD_MAX = 70;
+const META_DESCRIPTION_SOFT_MAX = 160;
+const META_DESCRIPTION_HARD_MAX = 200;
 
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
@@ -274,6 +278,38 @@ function normalizeUrl(raw: string): string | null {
   }
 }
 
+function normalizeUrlForDuplicateIdentity(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    if (parsed.searchParams.get("page") === "1") {
+      parsed.searchParams.delete("page");
+    }
+    parsed.searchParams.sort();
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function duplicateEntityKey(page: PageExtract): string {
+  const canonicalRaw = page.canonicalUrl ?? (page.canonical ? safeUrl(page.final_url, page.canonical) : null);
+  const canonicalKey = canonicalRaw ? normalizeUrlForDuplicateIdentity(canonicalRaw) : null;
+  if (canonicalKey) {
+    return canonicalKey;
+  }
+  return (
+    normalizeUrlForDuplicateIdentity(page.final_url) ??
+    normalizeUrl(page.final_url) ??
+    normalizeUrlForDuplicateIdentity(page.url) ??
+    page.url
+  );
+}
+
+function duplicateDisplayUrl(page: PageExtract): string {
+  return normalizeUrlForDuplicateIdentity(page.final_url) ?? normalizeUrl(page.final_url) ?? page.final_url;
+}
+
 function createIssue(input: IssueInput): Issue {
   return {
     id: input.id,
@@ -404,20 +440,23 @@ function collectDuplicateFieldIssues(input: {
   description: string;
   recommendation: string;
 }): Issue[] {
-  const map = new Map<string, string[]>();
+  const map = new Map<string, Map<string, string>>();
   for (const page of input.pages) {
     const normalized = normalizeText(input.valueByPage(page));
     if (!normalized) {
       continue;
     }
-    const urls = map.get(normalized) ?? [];
-    urls.push(page.url);
-    map.set(normalized, urls);
+    // Treat redirect aliases and pagination aliases as one entity.
+    const pageKey = duplicateEntityKey(page);
+    const displayUrl = duplicateDisplayUrl(page);
+    const urlsByFinal = map.get(normalized) ?? new Map<string, string>();
+    urlsByFinal.set(pageKey, displayUrl);
+    map.set(normalized, urlsByFinal);
   }
 
   const issues: Issue[] = [];
-  for (const [value, urls] of Array.from(map.entries()).sort((a, b) => compareStrings(a[0], b[0]))) {
-    const uniqueUrls = uniqueSorted(urls);
+  for (const [value, urlsByFinal] of Array.from(map.entries()).sort((a, b) => compareStrings(a[0], b[0]))) {
+    const uniqueUrls = uniqueSorted(Array.from(urlsByFinal.values()));
     if (uniqueUrls.length < 2) {
       continue;
     }
@@ -695,17 +734,19 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
             recommendation: "Add a unique, descriptive <title> tag.",
           }),
         );
-      } else if (titleLength < 20 || titleLength > 65) {
+      } else if (titleLength > TITLE_SOFT_MAX) {
+        const isHardViolation = titleLength > TITLE_HARD_MAX;
+        const maxLength = isHardViolation ? TITLE_HARD_MAX : TITLE_SOFT_MAX;
         issues.push(
           createSinglePageIssue(page, {
             id: "title_length_out_of_range",
             category: "seo",
-            severity: "warning",
+            severity: isHardViolation ? "error" : "warning",
             rank: 6,
             title: "Title length out of range",
-            description: "Title length should be between 20 and 65 characters.",
-            evidence: [{ type: "content", message: `Title length is ${titleLength}.`, url: page.url }],
-            recommendation: "Adjust title length to keep it concise and descriptive.",
+            description: `Title length exceeds recommended maximum (soft: ${TITLE_SOFT_MAX}, hard: ${TITLE_HARD_MAX}).`,
+            evidence: [{ type: "content", message: `Title length is ${titleLength}; max allowed for this level is ${maxLength}.`, url: page.url }],
+            recommendation: `Shorten title to max ${maxLength} characters.`,
           }),
         );
       }
@@ -723,17 +764,25 @@ export async function runRules(context: RuleContext): Promise<Issue[]> {
             recommendation: "Add a concise meta description aligned with search intent.",
           }),
         );
-      } else if (context.includeSerp && (descriptionLength < 70 || descriptionLength > 165)) {
+      } else if (context.includeSerp && descriptionLength > META_DESCRIPTION_SOFT_MAX) {
+        const isHardViolation = descriptionLength > META_DESCRIPTION_HARD_MAX;
+        const maxLength = isHardViolation ? META_DESCRIPTION_HARD_MAX : META_DESCRIPTION_SOFT_MAX;
         issues.push(
           createSinglePageIssue(page, {
             id: "description_length_out_of_range",
             category: "serp",
-            severity: "notice",
+            severity: isHardViolation ? "error" : "warning",
             rank: 4,
             title: "Description length out of range",
-            description: "Meta description length should be between 70 and 165 characters.",
-            evidence: [{ type: "content", message: `Description length is ${descriptionLength}.`, url: page.url }],
-            recommendation: "Adjust description length to improve snippet quality.",
+            description: `Meta description exceeds recommended maximum (soft: ${META_DESCRIPTION_SOFT_MAX}, hard: ${META_DESCRIPTION_HARD_MAX}).`,
+            evidence: [
+              {
+                type: "content",
+                message: `Description length is ${descriptionLength}; max allowed for this level is ${maxLength}.`,
+                url: page.url,
+              },
+            ],
+            recommendation: `Shorten meta description to max ${maxLength} characters.`,
           }),
         );
       }

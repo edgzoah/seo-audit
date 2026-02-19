@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError } from "commander";
 
 import { runAuditCommand, type AuditCliOptions, type AuditProgressEvent } from "./audit/run.js";
 import { initWorkspace } from "./config/index.js";
+import { closeCliDb } from "./db/prisma.js";
 import { loadDiffFromRuns, loadReportFromRun, renderDiff, renderReport, type CoverageMode, type ReportFormat } from "./report/index.js";
 
 function parseReportFormat(value: string): ReportFormat {
@@ -137,6 +138,7 @@ async function run(): Promise<void> {
         console.log(`HTML report: ${result.runDir}/report.html`);
         console.log(`Inputs: ${result.runDir}/inputs.json`);
       } finally {
+        await closeCliDb().catch(() => undefined);
         progress.finish();
       }
     });

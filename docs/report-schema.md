@@ -116,6 +116,7 @@ Full extraction data lives in `pages.json`.
 - `impact`: `high` | `medium` | `low`
 - `effort`: `high` | `medium` | `low`
 - `rationale` (string)
+- `issue_ids` (`string[]`, optional): referenced issue types (rule ids), e.g. `excessive_nav_only_inlinks`
 
 ## 8) Planned extensions (not guaranteed by the current schema)
 

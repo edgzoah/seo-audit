@@ -16,9 +16,18 @@ export function deriveRunStatus(summary: Report["summary"]): "healthy" | "watch"
 }
 
 export function parseReportJson(runId: string, json: unknown): Report {
-  if (!validateReport(json).valid) {
+  const candidate = (() => {
+    if (typeof json !== "string") return json;
+    try {
+      return JSON.parse(json) as unknown;
+    } catch {
+      return json;
+    }
+  })();
+
+  if (!validateReport(candidate).valid) {
     throw new Error(`Invalid report payload in DB for run: ${runId}`);
   }
 
-  return json as Report;
+  return candidate as Report;
 }

@@ -8,7 +8,6 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { IssueUrlActions } from "../IssueUrlActions";
 
 function severityVariant(severity: Issue["severity"]): "danger" | "warning" | "secondary" {
   if (severity === "error") return "danger";
@@ -17,12 +16,42 @@ function severityVariant(severity: Issue["severity"]): "danger" | "warning" | "s
 }
 
 export function IssueTable({ issues }: { issues: Issue[] }) {
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
-  const activeIssue = useMemo(() => issues.find((item) => item.id === activeId) ?? null, [issues, activeId]);
+  const activeIssue = useMemo(() => {
+    if (!activeKey) return null;
+    const index = Number.parseInt(activeKey.split("-").at(-1) ?? "", 10);
+    if (!Number.isInteger(index) || index < 0 || index >= issues.length) return null;
+    return issues[index] ?? null;
+  }, [issues, activeKey]);
+
+  function toggleExpanded(rowKey: string): void {
+    setExpandedRows((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }));
+  }
+
+  function expandAll(): void {
+    const next: Record<string, boolean> = {};
+    issues.forEach((issue, index) => {
+      next[`${issue.id}-${index}`] = true;
+    });
+    setExpandedRows(next);
+  }
+
+  function collapseAll(): void {
+    setExpandedRows({});
+  }
 
   return (
     <>
+      <div className="mb-3 flex items-center justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={expandAll}>
+          Show all affected URLs
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={collapseAll}>
+          Hide all affected URLs
+        </Button>
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -34,8 +63,13 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {issues.map((issue) => (
-            <TableRow key={issue.id}>
+          {issues.map((issue, issueIndex) => {
+            const rowKey = `${issue.id}-${issueIndex}`;
+            const isExpanded = expandedRows[rowKey] === true;
+            const visibleUrls = isExpanded ? issue.affected_urls : issue.affected_urls.slice(0, 2);
+            const hiddenCount = Math.max(0, issue.affected_urls.length - 2);
+            return (
+            <TableRow key={rowKey}>
               <TableCell>
                 <p className="font-medium">{issue.title}</p>
                 <p className="text-sm text-muted-foreground">{issue.description}</p>
@@ -45,14 +79,17 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
                 <Badge variant={severityVariant(issue.severity)}>{issue.severity}</Badge>
               </TableCell>
               <TableCell>
-                <div className="space-y-1 text-xs">
-                  {issue.affected_urls.slice(0, 2).map((url) => (
-                    <p key={url} className="rounded bg-muted px-2 py-1">
+                <div className="max-h-36 space-y-1 overflow-auto pr-1 text-xs">
+                  {visibleUrls.map((url, urlIndex) => (
+                    <p key={`${url}-${urlIndex}`} className="rounded bg-muted px-2 py-1">
                       {compactUrl(url)}
                     </p>
                   ))}
-                  {issue.affected_urls.length > 2 ? <p className="text-muted-foreground">+{issue.affected_urls.length - 2} more</p> : null}
-                  {issue.affected_urls[0] ? <IssueUrlActions url={issue.affected_urls[0]} /> : null}
+                  {hiddenCount > 0 ? (
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => toggleExpanded(rowKey)}>
+                      {isExpanded ? "Show less" : `Show all (${hiddenCount} more pages)`}
+                    </Button>
+                  ) : null}
                 </div>
               </TableCell>
               <TableCell>
@@ -65,17 +102,18 @@ export function IssueTable({ issues }: { issues: Issue[] }) {
                       <p className="text-sm">{issue.evidence[0]?.message ?? "No evidence"}</p>
                     </PopoverContent>
                   </Popover>
-                  <Button variant="secondary" size="sm" onClick={() => setActiveId(issue.id)}>
+                  <Button variant="secondary" size="sm" onClick={() => setActiveKey(rowKey)}>
                     Open
                   </Button>
                 </div>
               </TableCell>
             </TableRow>
-          ))}
+          );
+          })}
         </TableBody>
       </Table>
 
-      <Dialog open={Boolean(activeIssue)} onOpenChange={(open) => (!open ? setActiveId(null) : null)}>
+      <Dialog open={Boolean(activeIssue)} onOpenChange={(open) => (!open ? setActiveKey(null) : null)}>
         <DialogTrigger asChild>
           <span />
         </DialogTrigger>
