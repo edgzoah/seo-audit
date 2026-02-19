@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactElement } from "react";
 
+import { AuditPanel } from "../../components/AuditPanel";
 import { ScoreDeltaChart } from "../../components/charts/ScoreDeltaChart";
 import { listDiffCandidates, readDiff } from "../../lib/audits/fs";
 import type { DiffReport } from "../../lib/audits/types";
@@ -146,47 +147,43 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
         </div>
       </section>
 
-      <section className="card panel">
-        <div className="panel-head">
-          <h2>Select runs</h2>
-          <span>
-            <Link href="/audits">Audits list</Link>
-          </span>
-        </div>
-        <form className="audits-filters" method="get">
-          <label>
-            <span>Baseline</span>
-            <select name="baseline" defaultValue={selected.baseline}>
-              {candidates.map((candidate) => (
-                <option key={`baseline-${candidate}`} value={candidate}>
-                  {candidate}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Current</span>
-            <select name="current" defaultValue={selected.current}>
-              {candidates.map((candidate) => (
-                <option key={`current-${candidate}`} value={candidate}>
-                  {candidate}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="submit" className="btn-primary">
-            Compare
-          </button>
-        </form>
-      </section>
+      <AuditPanel.Root>
+        <AuditPanel.Header title="Select runs" meta={<Link href="/audits">Audits list</Link>} />
+        <AuditPanel.Body>
+          <form className="audits-filters" method="get">
+            <label>
+              <span>Baseline</span>
+              <select name="baseline" defaultValue={selected.baseline}>
+                {candidates.map((candidate) => (
+                  <option key={`baseline-${candidate}`} value={candidate}>
+                    {candidate}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Current</span>
+              <select name="current" defaultValue={selected.current}>
+                {candidates.map((candidate) => (
+                  <option key={`current-${candidate}`} value={candidate}>
+                    {candidate}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="submit" className="btn-primary">
+              Compare
+            </button>
+          </form>
+        </AuditPanel.Body>
+      </AuditPanel.Root>
 
-      <section className="card panel">
-        <div className="panel-head">
-          <h2>Score Delta by Category</h2>
-          <span>{chartData.length} categories</span>
-        </div>
-        <ScoreDeltaChart data={chartData} />
-      </section>
+      <AuditPanel.Root>
+        <AuditPanel.Header title="Score Delta by Category" meta={<>{chartData.length} categories</>} />
+        <AuditPanel.Body>
+          <ScoreDeltaChart data={chartData} />
+        </AuditPanel.Body>
+      </AuditPanel.Root>
 
       <section className="compare-grid">
         {renderIssueList("Resolved Issues", diff.resolved_issues)}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AuditPanel } from "../../../components/AuditPanel";
 import { IssueUrlActions } from "../../../components/IssueUrlActions";
 import { readRun } from "../../../lib/audits/fs";
 import type { Issue } from "../../../lib/audits/types";
@@ -107,119 +108,118 @@ export default async function AuditDetailPage({ params, searchParams }: AuditDet
         </article>
       </section>
 
-      <section className="card panel">
-        <div className="panel-head">
-          <h2>Issue Browser</h2>
-          <span>
-            <Link href="/audits">Back to audits</Link>
-          </span>
-        </div>
-        <form className="audits-filters" method="get">
-          <label>
-            <span>Category</span>
-            <select name="category" defaultValue={categoryFilter}>
-              <option value="all">All</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {humanize(category)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Severity</span>
-            <select name="severity" defaultValue={severityFilter}>
-              <option value="all">All</option>
-              <option value="error">Errors</option>
-              <option value="warning">Warnings</option>
-              <option value="notice">Notices</option>
-            </select>
-          </label>
-          <button type="submit" className="btn-primary">
-            Apply
-          </button>
-        </form>
-      </section>
+      <AuditPanel.Root>
+        <AuditPanel.Header title="Issue Browser" meta={<Link href="/audits">Back to audits</Link>} />
+        <AuditPanel.Body>
+          <form className="audits-filters" method="get">
+            <label>
+              <span>Category</span>
+              <select name="category" defaultValue={categoryFilter}>
+                <option value="all">All</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {humanize(category)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Severity</span>
+              <select name="severity" defaultValue={severityFilter}>
+                <option value="all">All</option>
+                <option value="error">Errors</option>
+                <option value="warning">Warnings</option>
+                <option value="notice">Notices</option>
+              </select>
+            </label>
+            <button type="submit" className="btn-primary">
+              Apply
+            </button>
+          </form>
+        </AuditPanel.Body>
+      </AuditPanel.Root>
 
-      <section className="card panel">
-        <div className="panel-head">
-          <h2>Issues</h2>
-          <span>{issueViews.length} rows</span>
-        </div>
-        <div className="data-table-wrap">
-          <table className="table issue-table">
-            <thead>
-              <tr>
-                <th>Issue</th>
-                <th>Category</th>
-                <th>Severity</th>
-                <th>Affected URLs</th>
-                <th>Evidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {issueViews.map((issue) => (
-                <tr key={issue.id} className="issue-row group">
-                  <td>
-                    <strong>{issue.title}</strong>
-                    <p className="muted">{issue.description}</p>
-                  </td>
-                  <td>{humanize(issue.category)}</td>
-                  <td>
-                    <span className={`badge badge-${issue.severity}`}>{issue.severity}</span>
-                  </td>
-                  <td>
-                    <div className="issue-url-stack">
-                      {issue.affected_urls.slice(0, 3).map((url) => (
-                        <div key={`${issue.id}-${url}`} className="issue-url-item">
-                          <code title={url}>{compactUrl(url)}</code>
-                          <IssueUrlActions url={url} />
-                        </div>
-                      ))}
-                      {issue.affected_urls.length > 3 ? (
-                        <small className="muted">+{issue.affected_urls.length - 3} more URLs</small>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="evidence-preview-list">
-                      {issue.evidence.slice(0, 2).map((evidence, index) => (
-                        <details key={`${issue.id}-preview-${index}`} className="evidence-popover">
-                          <summary title={evidence.message}>{humanize(evidence.type)}</summary>
-                          <div className="evidence-popover-content">
-                            <p>{evidence.message}</p>
-                            {evidence.url ? <code>{compactUrl(evidence.url)}</code> : null}
+      <AuditPanel.Root>
+        <AuditPanel.Header title="Issues" meta={<>{issueViews.length} rows</>} />
+        <AuditPanel.Body>
+          <div className="data-table-wrap">
+            <table className="table issue-table">
+              <thead>
+                <tr>
+                  <th>Issue</th>
+                  <th>Category</th>
+                  <th>Severity</th>
+                  <th>Affected URLs</th>
+                  <th>Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issueViews.map((issue) => (
+                  <tr key={issue.id} className="issue-row group">
+                    <td>
+                      <strong>{issue.title}</strong>
+                      <p className="muted">{issue.description}</p>
+                    </td>
+                    <td>{humanize(issue.category)}</td>
+                    <td>
+                      <span className={`badge badge-${issue.severity}`}>{issue.severity}</span>
+                    </td>
+                    <td>
+                      <div className="issue-url-stack">
+                        {issue.affected_urls.slice(0, 3).map((url) => (
+                          <div key={`${issue.id}-${url}`} className="issue-url-item">
+                            <code title={url}>{compactUrl(url)}</code>
+                            <IssueUrlActions url={url} />
                           </div>
-                        </details>
-                      ))}
-                    </div>
-                    <details className="evidence-dialog">
-                      <summary>Evidence ({issue.evidence.length})</summary>
-                      <div className="evidence-dialog-content">
-                        {issue.evidence.map((evidence, index) => (
-                          <article key={`${issue.id}-evidence-${index}`} className="evidence-item">
-                            <span className="tag">{humanize(evidence.type)}</span>
-                            <p>{evidence.message}</p>
-                            <div className="evidence-links">
-                              {evidence.url ? <code title={evidence.url}>{compactUrl(evidence.url)}</code> : null}
-                              {evidence.source_url ? (
-                                <code title={evidence.source_url}>{compactUrl(evidence.source_url)}</code>
-                              ) : null}
-                              {evidence.target_url ? (
-                                <code title={evidence.target_url}>{compactUrl(evidence.target_url)}</code>
-                              ) : null}
+                        ))}
+                        {issue.affected_urls.length > 3 ? (
+                          <small className="muted">+{issue.affected_urls.length - 3} more URLs</small>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="evidence-preview-list">
+                        {issue.evidence.slice(0, 2).map((evidence, index) => (
+                          <details key={`${issue.id}-preview-${index}`} className="evidence-popover">
+                            <summary title={evidence.message}>{humanize(evidence.type)}</summary>
+                            <div className="evidence-popover-content">
+                              <p>{evidence.message}</p>
+                              {evidence.url ? <code>{compactUrl(evidence.url)}</code> : null}
                             </div>
-                          </article>
+                          </details>
                         ))}
                       </div>
-                    </details>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                      <details className="evidence-dialog">
+                        <summary>Evidence ({issue.evidence.length})</summary>
+                        <div className="evidence-dialog-content">
+                          {issue.evidence.map((evidence, index) => (
+                            <article key={`${issue.id}-evidence-${index}`} className="evidence-item">
+                              <span className="tag">{humanize(evidence.type)}</span>
+                              <p>{evidence.message}</p>
+                              <div className="evidence-links">
+                                {evidence.url ? <code title={evidence.url}>{compactUrl(evidence.url)}</code> : null}
+                                {evidence.source_url ? (
+                                  <code title={evidence.source_url}>{compactUrl(evidence.source_url)}</code>
+                                ) : null}
+                                {evidence.target_url ? (
+                                  <code title={evidence.target_url}>{compactUrl(evidence.target_url)}</code>
+                                ) : null}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </details>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AuditPanel.Body>
+        <AuditPanel.Footer>
+          <p className="muted">Issues are sorted by severity first, then by affected URL count.</p>
+        </AuditPanel.Footer>
+      </AuditPanel.Root>
     </main>
   );
 }
