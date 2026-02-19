@@ -2,7 +2,11 @@ import Link from "next/link";
 import type { ReactElement } from "react";
 
 import { AuditPanel } from "../../components/AuditPanel";
+import { CompareLegendPopover } from "../../components/common/CompareLegendPopover";
+import { CompareRunMenu } from "../../components/common/CompareRunMenu";
 import { ScoreDeltaChart } from "../../components/charts/ScoreDeltaChart";
+import { Card, CardContent, CardHeader } from "../../components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { listDiffCandidates, readDiff } from "../../lib/audits/fs";
 import type { DiffReport } from "../../lib/audits/types";
 import { humanize } from "../lib/format";
@@ -38,11 +42,12 @@ function getInitialSelection(candidates: string[], baseline?: string, current?: 
 
 function renderIssueList(title: string, items: string[]): ReactElement {
   return (
-    <article className="card panel">
-      <div className="panel-head">
+    <Card className="panel">
+      <CardHeader>
         <h2>{title}</h2>
         <span>{items.length}</span>
-      </div>
+      </CardHeader>
+      <CardContent>
       {items.length > 0 ? (
         <ul className="token-list">
           {items.slice(0, 25).map((item) => (
@@ -52,44 +57,47 @@ function renderIssueList(title: string, items: string[]): ReactElement {
       ) : (
         <p className="muted">No items.</p>
       )}
-    </article>
+      </CardContent>
+    </Card>
   );
 }
 
 function renderRegressed(diff: DiffReport): ReactElement {
   return (
-    <article className="card panel">
-      <div className="panel-head">
+    <Card className="panel">
+      <CardHeader>
         <h2>Regressed Issues</h2>
         <span>{diff.regressed_issues.length}</span>
-      </div>
+      </CardHeader>
+      <CardContent>
       {diff.regressed_issues.length > 0 ? (
-        <table className="table compact">
-          <thead>
-            <tr>
-              <th>Issue</th>
-              <th>Count</th>
-              <th>Severity</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="compact">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Issue</TableHead>
+              <TableHead>Count</TableHead>
+              <TableHead>Severity</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {diff.regressed_issues.slice(0, 25).map((issue) => (
-              <tr key={issue.id}>
-                <td>{humanize(issue.id)}</td>
-                <td>
+              <TableRow key={issue.id}>
+                <TableCell>{humanize(issue.id)}</TableCell>
+                <TableCell>
                   {issue.baseline_count} → {issue.current_count}
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   {issue.baseline_max_severity} → {issue.current_max_severity}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       ) : (
         <p className="muted">No regressions.</p>
       )}
-    </article>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -175,11 +183,22 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
               Compare
             </button>
           </form>
+          <div className="compare-menu-row">
+            <CompareRunMenu label="Baseline" runIds={candidates} value={selected.baseline} />
+            <CompareRunMenu label="Current" runIds={candidates} value={selected.current} />
+          </div>
         </AuditPanel.Body>
       </AuditPanel.Root>
 
       <AuditPanel.Root>
-        <AuditPanel.Header title="Score Delta by Category" meta={<>{chartData.length} categories</>} />
+        <AuditPanel.Header
+          title="Score Delta by Category"
+          meta={
+            <span className="compare-chart-meta">
+              {chartData.length} categories <CompareLegendPopover />
+            </span>
+          }
+        />
         <AuditPanel.Body>
           <ScoreDeltaChart data={chartData} />
         </AuditPanel.Body>

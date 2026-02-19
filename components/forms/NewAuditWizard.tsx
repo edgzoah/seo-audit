@@ -6,6 +6,7 @@ import { Controller, useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 
 import { newAuditSchema, type NewAuditInput } from "../../lib/audits/new-audit-schema";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { CoverageModeToggle } from "./CoverageModeToggle";
 
 const STEPS = ["Target", "Scope", "Focus", "Run"] as const;
@@ -239,22 +240,26 @@ export function NewAuditWizard() {
         </div>
       </form>
 
-      {submitError ? (
-        <dialog open className="error-dialog">
-          <h3>Run failed</h3>
-          <p>{submitError}</p>
+      <Dialog open={Boolean(submitError)} onOpenChange={(open) => (!open ? setSubmitError(null) : null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Run failed</DialogTitle>
+            <DialogDescription>{submitError ?? ""}</DialogDescription>
+          </DialogHeader>
           <div className="wizard-actions">
             <button type="button" className="page-btn" onClick={() => setSubmitError(null)}>
               Close
             </button>
           </div>
-        </dialog>
-      ) : null}
+        </DialogContent>
+      </Dialog>
 
-      {showConfirm ? (
-        <dialog open className="confirm-dialog">
-          <h3>Confirm run</h3>
-          <p>Start a new audit now?</p>
+      <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm run</DialogTitle>
+            <DialogDescription>Start a new audit now?</DialogDescription>
+          </DialogHeader>
           <div className="wizard-actions">
             <button type="button" className="page-btn" onClick={() => setShowConfirm(false)}>
               Cancel
@@ -263,8 +268,8 @@ export function NewAuditWizard() {
               Confirm
             </button>
           </div>
-        </dialog>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

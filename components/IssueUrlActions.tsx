@@ -1,5 +1,7 @@
 "use client";
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+
 interface IssueUrlActionsProps {
   url: string;
 }
@@ -14,13 +16,26 @@ export function IssueUrlActions({ url }: IssueUrlActionsProps) {
   }
 
   return (
-    <span className="issue-actions">
-      <button type="button" className="issue-action-btn" onClick={copyUrl}>
-        Copy URL
-      </button>
-      <a className="issue-action-btn" href={url} target="_blank" rel="noreferrer noopener">
-        Open page
-      </a>
-    </span>
+    <TooltipProvider>
+      <span className="issue-actions">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="issue-action-btn" onClick={copyUrl}>
+              Copy URL
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Copy full URL</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <a className="issue-action-btn" href={url} target="_blank" rel="noreferrer noopener">
+              Open page
+            </a>
+          </TooltipTrigger>
+          <TooltipContent>Open in new tab</TooltipContent>
+        </Tooltip>
+      </span>
+    </TooltipProvider>
   );
 }

@@ -25,6 +25,7 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Compare view: `app/compare/page.tsx`, `components/charts/ScoreDeltaChart.tsx`
 - Audit creator: `app/new/page.tsx`, `components/forms/NewAuditWizard.tsx`, `app/api/audits/run/route.ts`
 - Data layer: `lib/audits/fs.ts`, `lib/audits/types.ts`
+- shadcn-style UI layer: `components/ui/*`
 
 ### TypeScript requirements
 - Union/intersection:
@@ -61,6 +62,22 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Container query:
   - `.audit-panel-root` and `@container audit-panel ...` in `app/globals.css`
 
+### UI components requirement
+- Table usage:
+  - `components/ui/table.tsx`, used in `app/compare/page.tsx`
+- Card usage:
+  - `components/ui/card.tsx`, used in `app/compare/page.tsx`
+- Dialog usage:
+  - `components/ui/dialog.tsx`, used in `components/forms/NewAuditWizard.tsx`
+- Tooltip usage:
+  - `components/ui/tooltip.tsx`, used in `components/IssueUrlActions.tsx`
+- Popover usage:
+  - `components/ui/popover.tsx`, used in `components/common/CompareLegendPopover.tsx`
+- DropdownMenu usage:
+  - `components/ui/dropdown-menu.tsx`, used in `components/common/CompareRunMenu.tsx`
+- Chart (Recharts) usage:
+  - `components/charts/ScoreDeltaChart.tsx`
+
 ### Tailwind checklist equivalence (current CSS implementation)
 - Responsive layouts/media queries: `app/globals.css`
 - Hover/focus pseudo-classes: `app/globals.css`
@@ -69,6 +86,4 @@ Checklist based on `PROJECT-SCHOOL_ADAPTATION_WORKPLAN.txt`.
 - Container concept: `.container` utility class in `app/globals.css`
 
 ### Remaining gaps vs original checklist
-- `shadcn/ui` components are not installed; current implementation uses custom components and native HTML.
-- Recharts chart is not integrated; current `components/charts/ScoreDeltaChart.tsx` is CSS-based.
 - Dedicated `/audits` detail route exists (`/audits/[runId]`), while legacy route `/runs/[runId]` is still present for backward compatibility.

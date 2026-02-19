@@ -775,6 +775,11 @@ details summary {
   gap: 0.5rem;
 }
 
+.score-chart-shell {
+  width: 100%;
+  min-height: 320px;
+}
+
 .score-delta-row {
   display: grid;
   grid-template-columns: 190px 1fr 70px;
@@ -801,6 +806,18 @@ details summary {
 
 .score-delta-bar.is-negative {
   background: linear-gradient(90deg, #d14a43, #e26058);
+}
+
+.compare-menu-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.compare-chart-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .new-audit-form {
@@ -984,6 +1001,68 @@ details summary {
   padding-top: 0.6rem;
 }
 
+.ui-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 20, 36, 0.42);
+  z-index: 40;
+}
+
+.ui-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100% - 1rem));
+  border: 1px solid #d4e3f7;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.2);
+  padding: 0.8rem;
+  z-index: 41;
+}
+
+.ui-dialog-header {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ui-dialog-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ui-dialog-description {
+  margin: 0;
+  color: var(--muted);
+}
+
+.ui-tooltip-content,
+.ui-popover-content,
+.ui-dropdown-content {
+  border: 1px solid #ccdef6;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+  padding: 0.45rem 0.55rem;
+  z-index: 45;
+}
+
+.ui-dropdown-content {
+  min-width: 240px;
+  padding: 0.25rem;
+}
+
+.ui-dropdown-item {
+  border-radius: 7px;
+  cursor: pointer;
+  padding: 0.38rem 0.46rem;
+}
+
+.ui-dropdown-item:hover {
+  background: #eff6ff;
+}
+
 @container audit-panel (max-width: 780px) {
   .audit-panel-header {
     flex-direction: column;
@@ -1080,6 +1159,12 @@ details summary {
 
   .score-delta-row {
     grid-template-columns: 120px 1fr 56px;
+  }
+
+  .compare-chart-meta {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
   }
 
   .coverage-toggle {
