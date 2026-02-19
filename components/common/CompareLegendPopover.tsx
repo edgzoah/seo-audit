@@ -1,14 +1,15 @@
 "use client";
 
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
 
 export function CompareLegendPopover() {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className="page-btn">
+        <Button type="button" variant="outline" size="sm">
           Delta legend
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent>
         <p>

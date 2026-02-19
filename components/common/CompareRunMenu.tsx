@@ -9,6 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { Button } from "../ui/button";
 
 interface CompareRunMenuProps {
   label: "Baseline" | "Current";
@@ -29,9 +30,9 @@ export function CompareRunMenu({ label, runIds, value }: CompareRunMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="page-btn">
+        <Button type="button" variant="outline">
           {label}: {value}
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>

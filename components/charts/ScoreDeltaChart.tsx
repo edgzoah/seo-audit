@@ -13,7 +13,7 @@ interface ScoreDeltaChartProps {
 
 export function ScoreDeltaChart({ data }: ScoreDeltaChartProps) {
   if (data.length === 0) {
-    return <p className="muted">No category deltas available.</p>;
+    return <p className="text-sm text-muted-foreground">No category deltas available.</p>;
   }
 
   return (
