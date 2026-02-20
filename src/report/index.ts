@@ -11,6 +11,19 @@ import { assertValidReport, type Report, type ReportFormat } from "./report-sche
 export * from "./report-schema.js";
 export type { DiffReport } from "./diff.js";
 
+function resolveRunsRoot(baseDir: string): string {
+  const custom = process.env.SEO_AUDIT_RUNS_DIR?.trim();
+  if (custom) {
+    return path.resolve(custom);
+  }
+
+  if (process.env.VERCEL === "1") {
+    return path.join("/tmp", "runs");
+  }
+
+  return path.join(baseDir, "runs");
+}
+
 export function renderReport(report: Report, format: ReportFormat): string {
   switch (format) {
     case "json":
@@ -27,7 +40,7 @@ export function renderReport(report: Report, format: ReportFormat): string {
 }
 
 export async function loadReportFromRun(runId: string, baseDir: string = process.cwd()): Promise<Report> {
-  const reportPath = path.join(baseDir, "runs", runId, "report.json");
+  const reportPath = path.join(resolveRunsRoot(baseDir), runId, "report.json");
   const raw = await readFile(reportPath, "utf-8");
   const parsed = JSON.parse(raw) as unknown;
   assertValidReport(parsed);

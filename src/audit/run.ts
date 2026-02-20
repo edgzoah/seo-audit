@@ -843,6 +843,19 @@ function buildRunId(now: Date = new Date()): string {
   return `run-${iso}`;
 }
 
+function resolveRunsRootDir(): string {
+  const custom = process.env.SEO_AUDIT_RUNS_DIR?.trim();
+  if (custom) {
+    return path.resolve(custom);
+  }
+
+  if (process.env.VERCEL === "1") {
+    return path.join("/tmp", "runs");
+  }
+
+  return path.join(process.cwd(), "runs");
+}
+
 function parseConstraints(rawConstraints: string | undefined): string[] {
   if (!rawConstraints) {
     return [];
@@ -1065,7 +1078,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const inputs = buildInputs(normalizedUrl, config.defaults, options, resolvedBriefFocus);
 
   const runId = buildRunId(startedAtDate);
-  const runDir = path.join(process.cwd(), "runs", runId);
+  const runDir = path.join(resolveRunsRootDir(), runId);
   await mkdir(runDir, { recursive: true });
   emitProgress(options, 6, "init", "Preparing run directory");
 
