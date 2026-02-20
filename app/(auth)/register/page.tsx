@@ -60,7 +60,7 @@ export default function RegisterPage() {
       return;
     }
 
-    router.push("/");
+    router.push("/dashboard");
     router.refresh();
   }
 
@@ -86,7 +86,7 @@ export default function RegisterPage() {
                   type="button"
                   className="w-full"
                   variant="outline"
-                  onClick={() => signIn("google", { callbackUrl: "/" })}
+                  onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
                 >
                   Continue with Google
                 </Button>

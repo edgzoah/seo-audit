@@ -13,7 +13,8 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const pathname = (await headers()).get("x-pathname") ?? "";
   const isAuthPage = pathname === "/login" || pathname === "/register";
-  const user = isAuthPage ? null : await getOptionalUser();
+  const isMarketingPage = pathname === "/" || pathname === "/landing";
+  const user = isAuthPage || isMarketingPage ? null : await getOptionalUser();
 
   return (
     <html lang="en">

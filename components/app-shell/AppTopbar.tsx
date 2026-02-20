@@ -11,6 +11,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../u
 
 function formatCrumb(pathname: string): string {
   if (pathname === "/") {
+    return "Landing";
+  }
+
+  if (pathname === "/dashboard") {
     return "Dashboard";
   }
 

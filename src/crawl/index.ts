@@ -198,6 +198,18 @@ function isBlockedByRobots(url: string, rules: string[]): boolean {
   }
 }
 
+function isSitemapXmlUrl(url: string): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    if (!pathname.endsWith(".xml")) {
+      return false;
+    }
+    return pathname.includes("sitemap") || pathname.startsWith("/wp-sitemap");
+  } catch {
+    return false;
+  }
+}
+
 function resolveAllowedHosts(inputs: AuditInputs): Set<string> {
   if (inputs.allowed_domains.length > 0) {
     return new Set(inputs.allowed_domains.map((domain) => domain.toLowerCase()));
@@ -234,6 +246,10 @@ function applySeedFilters(input: {
   const excludePatterns = input.inputs.exclude_patterns.map((pattern) => pattern.trim()).filter((pattern) => pattern.length > 0);
 
   const filtered = input.candidates.filter((url) => {
+    if (isSitemapXmlUrl(url)) {
+      return false;
+    }
+
     if (!isAllowedByDomain(url, input.allowedHosts)) {
       return false;
     }
@@ -407,6 +423,10 @@ function extractInternalLinks(html: string, pageUrl: string): string[] {
 }
 
 function shouldAllowUrlForCrawl(url: string, inputs: AuditInputs, allowedHosts: Set<string>): boolean {
+  if (isSitemapXmlUrl(url)) {
+    return false;
+  }
+
   try {
     const pathname = new URL(url).pathname.toLowerCase();
     if (pathname.startsWith("/cdn-cgi/")) {

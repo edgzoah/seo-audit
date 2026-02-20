@@ -23,7 +23,7 @@ export function AppSidebar({ userEmail }: AppSidebarProps) {
       </div>
       <nav className="grid gap-1">
         {appNavItems.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+          const active = pathname.startsWith(item.href);
           const Icon = item.icon;
           return (
             <Link

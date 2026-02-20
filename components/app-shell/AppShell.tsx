@@ -14,8 +14,9 @@ interface AppShellProps {
 export function AppShell({ children, userEmail }: AppShellProps) {
   const pathname = usePathname();
   const isAuthPage = pathname === "/login" || pathname === "/register";
+  const isMarketingPage = pathname === "/" || pathname === "/landing";
 
-  if (isAuthPage) {
+  if (isAuthPage || isMarketingPage) {
     return <main className="page-wrap">{children}</main>;
   }
 

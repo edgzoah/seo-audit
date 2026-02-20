@@ -48,8 +48,8 @@ export default function LoginPage() {
     }
 
     const nextPath = (() => {
-      if (typeof window === "undefined") return "/";
-      return new URLSearchParams(window.location.search).get("next") || "/";
+      if (typeof window === "undefined") return "/dashboard";
+      return new URLSearchParams(window.location.search).get("next") || "/dashboard";
     })();
     router.push(nextPath);
     router.refresh();
@@ -77,7 +77,7 @@ export default function LoginPage() {
                   type="button"
                   className="w-full"
                   variant="outline"
-                  onClick={() => signIn("google", { callbackUrl: "/" })}
+                  onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
                 >
                   Continue with Google
                 </Button>

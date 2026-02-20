@@ -2,10 +2,11 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const PUBLIC_PATHS = new Set<string>([
-  "/login",
-  "/register",
-]);
+const PUBLIC_PATHS = new Set<string>(["/", "/login", "/register", "/landing"]);
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/landing/");
+}
 
 function isPublicAsset(pathname: string): boolean {
   return (
@@ -29,15 +30,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  if (PUBLIC_PATHS.has(pathname)) {
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
-    if (token?.sub) {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
+  if (isPublicPath(pathname)) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  const protectedAppRoute = pathname === "/" || pathname.startsWith("/audits") || pathname.startsWith("/compare") || pathname.startsWith("/new");
+  const protectedAppRoute =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/audits") ||
+    pathname.startsWith("/compare") ||
+    pathname.startsWith("/new");
   const protectedApiRoute = pathname.startsWith("/api/runs") || pathname.startsWith("/api/audits/run");
 
   if (!protectedAppRoute && !protectedApiRoute) {
