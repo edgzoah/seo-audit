@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
+import { signOut } from "next-auth/react";
 
 import { appNavItems } from "./nav";
 import { Button } from "../ui/button";
@@ -20,7 +21,11 @@ function formatCrumb(pathname: string): string {
     .join(" / ");
 }
 
-export function AppTopbar() {
+interface AppTopbarProps {
+  userEmail: string | null;
+}
+
+export function AppTopbar({ userEmail }: AppTopbarProps) {
   const pathname = usePathname();
   const crumb = formatCrumb(pathname);
 
@@ -56,12 +61,25 @@ export function AppTopbar() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button asChild variant="secondary" size="sm">
-            <Link href="/compare">Open Compare</Link>
-          </Button>
-          <Button asChild size="sm">
-            <Link href="/new">New Audit</Link>
-          </Button>
+          {userEmail ? <p className="text-xs text-muted-foreground">{userEmail}</p> : null}
+          {userEmail ? (
+            <>
+              <Button asChild variant="secondary" size="sm">
+                <Link href="/compare">Open Compare</Link>
+              </Button>
+              <Button asChild size="sm">
+                <Link href="/new">New Audit</Link>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => signOut({ callbackUrl: "/login" })}
+              >
+                Logout
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
     </header>

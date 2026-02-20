@@ -5,12 +5,13 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 
 import type { NewAuditInput } from "./new-audit-schema";
-import { getRunById } from "./repo";
+import { attachRunOwner, getRunById } from "./repo";
 
 export type RunJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface RunJobState {
   id: string;
+  ownerUserId: string;
   status: RunJobStatus;
   createdAt: string;
   updatedAt: string;
@@ -24,6 +25,7 @@ export interface RunJobState {
 
 const MAX_TAIL = 6000;
 const JOB_TTL_MS = 6 * 60 * 60 * 1000;
+const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 declare global {
   var __auditRunJobs: Map<string, RunJobState> | undefined;
@@ -90,7 +92,7 @@ function buildCliArgs(input: NewAuditInput): string[] {
 
 async function waitForRunPersisted(runId: string): Promise<boolean> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const report = await getRunById(runId);
+    const report = await getRunById(SYSTEM_USER_ID, runId, { bypassOwnerFilter: true });
     if (report) return true;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -114,7 +116,7 @@ function setJobState(jobId: string, updater: (prev: RunJobState) => RunJobState)
   store.set(jobId, updater(prev));
 }
 
-async function runJob(jobId: string, input: NewAuditInput): Promise<void> {
+async function runJob(jobId: string, ownerUserId: string, input: NewAuditInput): Promise<void> {
   try {
     setJobState(jobId, (prev) => ({ ...prev, status: "running", updatedAt: nowIso() }));
 
@@ -201,6 +203,21 @@ async function runJob(jobId: string, input: NewAuditInput): Promise<void> {
       }));
       return;
     }
+    const ownerAttached = await attachRunOwner(ownerUserId, runId);
+    if (!ownerAttached) {
+      setJobState(jobId, (prev) => ({
+        ...prev,
+        status: "failed",
+        updatedAt: nowIso(),
+        runId,
+        error: `Audit finished but run ownership could not be set: ${runId}`,
+        logs: {
+          stdoutTail: trimTail(stdout),
+          stderrTail: trimTail(stderr),
+        },
+      }));
+      return;
+    }
 
     setJobState(jobId, (prev) => ({
       ...prev,
@@ -218,13 +235,14 @@ async function runJob(jobId: string, input: NewAuditInput): Promise<void> {
   }
 }
 
-export function startRunJob(input: NewAuditInput): RunJobState {
+export function startRunJob(input: NewAuditInput, ownerUserId: string): RunJobState {
   const store = jobsStore();
   cleanupExpiredJobs(store);
 
   const id = randomUUID();
   const state: RunJobState = {
     id,
+    ownerUserId,
     status: "queued",
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -235,7 +253,7 @@ export function startRunJob(input: NewAuditInput): RunJobState {
   };
 
   store.set(id, state);
-  void runJob(id, input);
+  void runJob(id, ownerUserId, input);
   return state;
 }
 

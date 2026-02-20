@@ -1,15 +1,25 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMemo, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { useMemo, useRef, useState } from "react";
+import ReCAPTCHA from "react-google-recaptcha";
 import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
 
 import { newAuditSchema, type NewAuditInput } from "../../lib/audits/new-audit-schema";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "../ui/form";
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
@@ -37,12 +47,15 @@ function splitByCommaOrLine(value: string): string[] {
 
 export function NewAuditWizard() {
   const router = useRouter();
+  const captchaRef = useRef<ReCAPTCHA | null>(null);
   const [step, setStep] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobLogTail, setJobLogTail] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? "";
 
   const form = useForm<NewAuditInput>({
     resolver: zodResolver(newAuditSchema),
@@ -57,12 +70,14 @@ export function NewAuditWizard() {
       primary_url: "",
       keyword: "",
       goal: "",
+      recaptchaToken: "",
     },
     mode: "onChange",
   });
 
   const values = form.watch();
   const progressPercent = useMemo(() => Math.round(((step + 1) / STEPS.length) * 100), [step]);
+  const recaptchaToken = form.watch("recaptchaToken");
 
   async function nextStep(): Promise<void> {
     setSubmitError(null);
@@ -141,6 +156,8 @@ export function NewAuditWizard() {
 
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error));
+      captchaRef.current?.reset();
+      form.setValue("recaptchaToken", "", { shouldValidate: true });
     } finally {
       setIsRunning(false);
       setRunStatus(null);
@@ -161,65 +178,193 @@ export function NewAuditWizard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
+        <div className="group flex flex-wrap gap-2 rounded-md border bg-muted/20 p-2">
           {STEPS.map((name, index) => (
-            <Badge key={name} variant={index === step ? "default" : "secondary"}>{name}</Badge>
+            <Badge
+              key={name}
+              variant={index === step ? "default" : "secondary"}
+              className={index === step ? "group-hover:bg-primary/90" : "group-hover:bg-secondary/80"}
+            >
+              {name}
+            </Badge>
           ))}
         </div>
 
-        {step === 0 ? (
-          <section className="space-y-2">
-            <p className="text-sm font-medium">Target URL</p>
-            <Input placeholder="https://example.com" {...form.register("target")} />
-            {form.formState.errors.target ? <p className="text-sm text-rose-600">{form.formState.errors.target.message}</p> : null}
-          </section>
-        ) : null}
+        <Form {...form}>
+          <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+            {step === 0 ? (
+              <section className="space-y-2">
+                <FormField
+                  control={form.control}
+                  name="target"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Target URL</FormLabel>
+                      <FormControl>
+                        <Input placeholder="https://example.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </section>
+            ) : null}
 
-        {step === 1 ? (
-          <section className="space-y-3">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Coverage</p>
-              <Controller control={form.control} name="coverage" render={({ field }) => <CoverageModeToggle value={field.value} onChange={field.onChange} />} />
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Max pages</p>
-                <Input type="number" min={1} max={5000} {...form.register("max_pages", { valueAsNumber: true })} />
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Depth</p>
-                <Input type="number" min={1} max={20} {...form.register("depth", { valueAsNumber: true })} />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Include patterns</p>
-              <Textarea rows={3} onChange={(e) => form.setValue("include_patterns", splitByCommaOrLine(e.target.value))} />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Exclude patterns</p>
-              <Textarea rows={3} onChange={(e) => form.setValue("exclude_patterns", splitByCommaOrLine(e.target.value))} />
-            </div>
-          </section>
-        ) : null}
+            {step === 1 ? (
+              <section className="space-y-3">
+                <FormField
+                  control={form.control}
+                  name="coverage"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Coverage</FormLabel>
+                      <FormControl>
+                        <CoverageModeToggle value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-        {step === 2 ? (
-          <section className="space-y-3">
-            <p className="text-sm font-medium">Review</p>
-            <div className="grid gap-2 rounded-md border p-3 text-sm md:grid-cols-2">
-              <p><b>Target:</b> {values.target}</p>
-              <p><b>Coverage:</b> {values.coverage}</p>
-              <p><b>Max pages:</b> {values.max_pages}</p>
-              <p><b>Depth:</b> {values.depth}</p>
-            </div>
-            <Button type="button" onClick={confirmRun} disabled={isRunning}>
-              {isRunning ? "Running..." : "Run audit"}
-            </Button>
-            {isRunning ? <div className="run-loader" aria-label="Audit running" /> : null}
-            {isRunning && runStatus ? <p className="text-sm text-muted-foreground">Status: {runStatus}</p> : null}
-            {isRunning && jobId ? <p className="text-xs text-muted-foreground">Job ID: {jobId}</p> : null}
-            {isRunning && jobLogTail ? <pre className="max-h-40 overflow-auto rounded border bg-muted/40 p-2 text-xs">{jobLogTail}</pre> : null}
-          </section>
-        ) : null}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="max_pages"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Max pages</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={Number.isFinite(field.value) ? field.value : ""}
+                            onBlur={field.onBlur}
+                            onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="depth"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Depth</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={Number.isFinite(field.value) ? field.value : ""}
+                            onBlur={field.onBlur}
+                            onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="include_patterns"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Include patterns</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={3}
+                          value={field.value.join("\n")}
+                          onBlur={field.onBlur}
+                          onChange={(event) => field.onChange(splitByCommaOrLine(event.target.value))}
+                        />
+                      </FormControl>
+                      <FormDescription>One per line or comma-separated.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="exclude_patterns"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Exclude patterns</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={3}
+                          value={field.value.join("\n")}
+                          onBlur={field.onBlur}
+                          onChange={(event) => field.onChange(splitByCommaOrLine(event.target.value))}
+                        />
+                      </FormControl>
+                      <FormDescription>One per line or comma-separated.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </section>
+            ) : null}
+
+            {step === 2 ? (
+              <section className="space-y-3">
+                <p className="text-sm font-medium">Review</p>
+                <div className="grid gap-2 rounded-md border p-3 text-sm md:grid-cols-2">
+                  <p><b>Target:</b> {values.target}</p>
+                  <p><b>Coverage:</b> {values.coverage}</p>
+                  <p><b>Max pages:</b> {values.max_pages}</p>
+                  <p><b>Depth:</b> {values.depth}</p>
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="recaptchaToken"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Verification</FormLabel>
+                      <FormControl>
+                        <div className="rounded-md border bg-muted/20 p-3">
+                          {siteKey ? (
+                            <ReCAPTCHA
+                              ref={captchaRef}
+                              sitekey={siteKey}
+                              onChange={(token) => field.onChange(token ?? "")}
+                              onExpired={() => field.onChange("")}
+                              onErrored={() => field.onChange("")}
+                            />
+                          ) : (
+                            <p className="text-sm text-amber-700">
+                              Missing `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` in env.
+                            </p>
+                          )}
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <Button
+                  type="button"
+                  onClick={confirmRun}
+                  disabled={isRunning || !siteKey || !recaptchaToken}
+                >
+                  {isRunning ? "Running..." : "Run audit"}
+                </Button>
+                {isRunning ? <div className="run-loader" aria-label="Audit running" /> : null}
+                {isRunning && runStatus ? <p className="text-sm text-muted-foreground">Status: {runStatus}</p> : null}
+                {isRunning && jobId ? <p className="text-xs text-muted-foreground">Job ID: {jobId}</p> : null}
+                {isRunning && jobLogTail ? <pre className="max-h-40 overflow-auto rounded border bg-muted/40 p-2 text-xs">{jobLogTail}</pre> : null}
+              </section>
+            ) : null}
+          </form>
+        </Form>
 
         <Separator />
 

@@ -2,6 +2,16 @@ import postgres, { type Sql } from "postgres";
 
 let cliDb: Sql | null = null;
 
+function toPostgresJsUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("schema");
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function ensureDatabaseConfigured(): string {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -12,7 +22,7 @@ function ensureDatabaseConfigured(): string {
 
 export function getCliDb(): Sql {
   if (!cliDb) {
-    cliDb = postgres(ensureDatabaseConfigured(), {
+    cliDb = postgres(toPostgresJsUrl(ensureDatabaseConfigured()), {
       prepare: false,
       max: 5,
     });

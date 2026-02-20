@@ -12,10 +12,21 @@ enum AuditRunStatus {
   critical
 }
 
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditRuns    AuditRun[]
+}
+
 model AuditRun {
   id          String         @id @default(uuid()) @db.Uuid
   runId       String         @unique
   displayName String?
+  ownerUserId String         @db.Uuid
+  owner       User           @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
   target      String
   domain      String?
   coverage    String
@@ -33,6 +44,8 @@ model AuditRun {
   updatedAt   DateTime       @updatedAt
 
   @@index([startedAt(sort: Desc)])
+  @@index([ownerUserId, startedAt(sort: Desc)])
+  @@index([ownerUserId, runId])
   @@index([status, startedAt(sort: Desc)])
   @@index([coverage, startedAt(sort: Desc)])
   @@index([domain, startedAt(sort: Desc)])

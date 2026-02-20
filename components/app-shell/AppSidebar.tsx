@@ -7,14 +7,19 @@ import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { appNavItems } from "./nav";
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  userEmail: string | null;
+}
+
+export function AppSidebar({ userEmail }: AppSidebarProps) {
   const pathname = usePathname();
 
   return (
-    <aside className="sidebar-glass hidden h-screen flex-col gap-4 p-4 md:flex">
+    <aside className="sidebar-glass hidden h-screen flex-col gap-4 overflow-y-auto p-4 md:sticky md:top-0 md:flex md:self-start">
       <div className="rounded-lg border bg-card p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">SEO Audit</p>
         <p className="mt-1 text-sm font-semibold">SEO Audit Dashboard</p>
+        {userEmail ? <p className="mt-1 text-xs text-muted-foreground">{userEmail}</p> : null}
       </div>
       <nav className="grid gap-1">
         {appNavItems.map((item) => {

@@ -2,6 +2,16 @@ import postgres, { type Sql } from "postgres";
 
 let db: Sql | null = null;
 
+function toPostgresJsUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("schema");
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function ensureDbConfigured(): string {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -12,7 +22,7 @@ export function ensureDbConfigured(): string {
 
 export function getDb(): Sql {
   if (!db) {
-    db = postgres(ensureDbConfigured(), {
+    db = postgres(toPostgresJsUrl(ensureDbConfigured()), {
       prepare: false,
       max: 10,
     });

@@ -13,6 +13,8 @@ interface MigrationStats {
   failedRunIds: string[];
 }
 
+const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
+
 async function listRunIds(runsDir: string): Promise<string[]> {
   const entries = await readdir(runsDir, { withFileTypes: true });
   return entries
@@ -58,7 +60,7 @@ async function migrateRuns(): Promise<MigrationStats> {
         continue;
       }
 
-      await upsertRunFromReport(report);
+      await upsertRunFromReport(SYSTEM_USER_ID, report);
       stats.imported += 1;
     } catch (error) {
       stats.failed += 1;

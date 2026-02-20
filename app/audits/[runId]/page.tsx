@@ -10,6 +10,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { getRunById, getRunDisplayName } from "../../../lib/audits/repo";
+import { requireUser } from "../../../lib/auth/session";
 import { compactUrl } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +28,13 @@ function normalizeSeverity(value: string | undefined): SeverityRank | "all" {
 }
 
 export default async function AuditDetailPage({ params, searchParams }: AuditDetailPageProps) {
+  const user = await requireUser();
   const { runId } = await params;
   const query = searchParams ? await searchParams : undefined;
-  const [report, displayName] = await Promise.all([getRunById(runId), getRunDisplayName(runId)]);
+  const [report, displayName] = await Promise.all([
+    getRunById(user.userId, runId),
+    getRunDisplayName(user.userId, runId),
+  ]);
 
   if (!report) notFound();
 

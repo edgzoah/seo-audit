@@ -40,6 +40,27 @@ Create `.env.local` (or export env var) using `.env.example`:
 
 ```bash
 DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/seo_audit?schema=public\"
+NEXT_PUBLIC_RECAPTCHA_SITE_KEY=\"your_site_key\"
+RECAPTCHA_SECRET_KEY=\"your_secret_key\"
+NEXTAUTH_URL=\"http://localhost:3000\"
+NEXTAUTH_SECRET=\"your_strong_random_secret\"
+```
+
+reCAPTCHA setup:
+
+1. Go to https://www.google.com/recaptcha/admin/create
+2. Choose `reCAPTCHA v2` -> `I'm not a robot` Checkbox.
+3. Add domains:
+   - `localhost`
+   - your production domain
+4. Copy keys and set:
+   - `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` (frontend/public)
+   - `RECAPTCHA_SECRET_KEY` (backend/secret)
+
+Generate NextAuth secret:
+
+```bash
+openssl rand -base64 32
 ```
 
 Apply schema:

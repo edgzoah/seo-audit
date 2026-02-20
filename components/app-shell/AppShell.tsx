@@ -1,14 +1,29 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
 
 import { AppSidebar } from "./AppSidebar";
 import { AppTopbar } from "./AppTopbar";
 
-export function AppShell({ children }: { children: ReactNode }) {
+interface AppShellProps {
+  children: ReactNode;
+  userEmail: string | null;
+}
+
+export function AppShell({ children, userEmail }: AppShellProps) {
+  const pathname = usePathname();
+  const isAuthPage = pathname === "/login" || pathname === "/register";
+
+  if (isAuthPage) {
+    return <main className="page-wrap">{children}</main>;
+  }
+
   return (
     <div className="app-shell-layout">
-      <AppSidebar />
+      <AppSidebar userEmail={userEmail} />
       <div className="min-w-0">
-        <AppTopbar />
+        <AppTopbar userEmail={userEmail} />
         <main className="page-wrap">{children}</main>
       </div>
     </div>

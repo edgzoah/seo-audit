@@ -6,6 +6,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { listRunsPage, type RunCoverageFilter, type RunSeverityFilter, type RunSort, type RunStatusFilter, type RunSummary } from "../../lib/audits/repo";
+import { requireUser } from "../../lib/auth/session";
 import { compactUrl, formatPercent } from "../lib/format";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +119,7 @@ function buildPageHref(input: {
 }
 
 export default async function AuditsPage({ searchParams }: AuditsPageProps) {
+  const user = await requireUser();
   const params = searchParams ? await searchParams : undefined;
   const statusFilter = normalizeStatus(params?.status);
   const severityFilter = normalizeSeverity(params?.severity);
@@ -127,7 +129,7 @@ export default async function AuditsPage({ searchParams }: AuditsPageProps) {
   const pageSize = normalizePageSize(params?.pageSize);
   const domainFilter = (params?.domain ?? "").trim();
 
-  const pageResult = await listRunsPage({
+  const pageResult = await listRunsPage(user.userId, {
     page,
     pageSize,
     status: statusFilter,

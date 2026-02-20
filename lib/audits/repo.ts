@@ -57,6 +57,10 @@ interface AuditRunListRow {
   notices: number;
 }
 
+interface GetRunByIdOptions {
+  bypassOwnerFilter?: boolean;
+}
+
 function normalizePage(value: number | undefined): number {
   if (!value || Number.isNaN(value)) return 1;
   return Math.max(1, Math.floor(value));
@@ -135,7 +139,7 @@ function whereFromParams(params: ListRunsPageParams): { sql: string; values: Sql
     return { sql: "", values };
   }
 
-  return { sql: `WHERE ${clauses.join(" AND ")}`, values };
+  return { sql: `AND ${clauses.join(" AND ")}`, values };
 }
 
 function logQueryDuration(name: string, startedMs: number): void {
@@ -145,7 +149,7 @@ function logQueryDuration(name: string, startedMs: number): void {
   }
 }
 
-export async function listRunsPage(params: ListRunsPageParams = {}): Promise<ListRunsPageResult> {
+export async function listRunsPage(ownerUserId: string, params: ListRunsPageParams = {}): Promise<ListRunsPageResult> {
   ensureDbConfigured();
   const started = Date.now();
   const db = getDb();
@@ -157,13 +161,14 @@ export async function listRunsPage(params: ListRunsPageParams = {}): Promise<Lis
   const where = whereFromParams(params);
   const orderBy = orderByFromSort(params.sort);
 
-  const listValues = [...where.values, pageSize, offset];
-  const limitParam = `$${where.values.length + 1}`;
-  const offsetParam = `$${where.values.length + 2}`;
+  const listValues = [ownerUserId, ...where.values, pageSize, offset];
+  const limitParam = `$${where.values.length + 2}`;
+  const offsetParam = `$${where.values.length + 3}`;
 
   const rows = await db.unsafe<AuditRunListRow[]>(
     `SELECT "runId", "displayName", "startedAt", "target", "coverage", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices"
      FROM "AuditRun"
+     WHERE "ownerUserId" = $1
      ${where.sql}
      ORDER BY ${orderBy}
      LIMIT ${limitParam}
@@ -174,8 +179,9 @@ export async function listRunsPage(params: ListRunsPageParams = {}): Promise<Lis
   const totalRows = await db.unsafe<Array<{ total: number }>>(
     `SELECT COUNT(*)::int AS total
      FROM "AuditRun"
+     WHERE "ownerUserId" = $1
      ${where.sql}`,
-    where.values,
+    [ownerUserId, ...where.values],
   );
 
   const items = rows.map((row) => toRunSummaryFromRow(row));
@@ -190,15 +196,21 @@ export async function listRunsPage(params: ListRunsPageParams = {}): Promise<Lis
   };
 }
 
-export async function getRunById(runId: string): Promise<Report | null> {
+export async function getRunById(ownerUserId: string, runId: string, options: GetRunByIdOptions = {}): Promise<Report | null> {
   ensureDbConfigured();
   const started = Date.now();
   const db = getDb();
 
-  const rows = await db.unsafe<Array<{ runId: string; reportJson: unknown }>>(
-    'SELECT "runId", "reportJson" FROM "AuditRun" WHERE "runId" = $1 LIMIT 1',
-    [runId],
-  );
+  const rows = options.bypassOwnerFilter
+    ? await db.unsafe<Array<{ runId: string; reportJson: unknown }>>(
+      'SELECT "runId", "reportJson" FROM "AuditRun" WHERE "runId" = $1 LIMIT 1',
+      [runId],
+    )
+    : await db.unsafe<Array<{ runId: string; reportJson: unknown }>>(
+      'SELECT "runId", "reportJson" FROM "AuditRun" WHERE "ownerUserId" = $1 AND "runId" = $2 LIMIT 1',
+      [ownerUserId, runId],
+    );
+
   logQueryDuration("getRunById", started);
 
   const row = rows[0];
@@ -206,48 +218,56 @@ export async function getRunById(runId: string): Promise<Report | null> {
   return parseReportJson(row.runId, row.reportJson);
 }
 
-export async function getRunDisplayName(runId: string): Promise<string | null> {
+export async function getRunDisplayName(ownerUserId: string, runId: string): Promise<string | null> {
   ensureDbConfigured();
   const db = getDb();
   const rows = await db.unsafe<Array<{ displayName: string | null }>>(
-    'SELECT "displayName" FROM "AuditRun" WHERE "runId" = $1 LIMIT 1',
-    [runId],
+    'SELECT "displayName" FROM "AuditRun" WHERE "ownerUserId" = $1 AND "runId" = $2 LIMIT 1',
+    [ownerUserId, runId],
   );
   return rows[0]?.displayName ?? null;
 }
 
-export async function setRunDisplayName(runId: string, displayName: string | null): Promise<boolean> {
+export async function setRunDisplayName(ownerUserId: string, runId: string, displayName: string | null): Promise<boolean> {
   ensureDbConfigured();
   const db = getDb();
   const rows = await db.unsafe<Array<{ runId: string }>>(
-    'UPDATE "AuditRun" SET "displayName" = $2, "updatedAt" = NOW() WHERE "runId" = $1 RETURNING "runId"',
-    [runId, displayName],
+    'UPDATE "AuditRun" SET "displayName" = $3, "updatedAt" = NOW() WHERE "ownerUserId" = $1 AND "runId" = $2 RETURNING "runId"',
+    [ownerUserId, runId, displayName],
   );
   return rows.length > 0;
 }
 
-export async function listDiffCandidates(limit = 200): Promise<string[]> {
+export async function listDiffCandidates(ownerUserId: string, limit = 200): Promise<string[]> {
   ensureDbConfigured();
   const started = Date.now();
   const db = getDb();
 
   const rows = await db.unsafe<Array<{ runId: string }>>(
-    'SELECT "runId" FROM "AuditRun" ORDER BY "startedAt" DESC LIMIT $1',
-    [limit],
+    'SELECT "runId" FROM "AuditRun" WHERE "ownerUserId" = $1 ORDER BY "startedAt" DESC LIMIT $2',
+    [ownerUserId, limit],
   );
 
   logQueryDuration("listDiffCandidates", started);
   return rows.map((row) => row.runId);
 }
 
-export async function getDiff(baselineId: string, currentId: string): Promise<DiffReport | null> {
+export async function getDiff(ownerUserId: string, baselineId: string, currentId: string): Promise<DiffReport | null> {
   ensureDbConfigured();
   const started = Date.now();
   const db = getDb();
 
   const stored = await db.unsafe<Array<{ diffJson: DiffReport }>>(
-    'SELECT "diffJson" FROM "AuditDiff" WHERE "baselineRunId" = $1 AND "currentRunId" = $2 LIMIT 1',
-    [baselineId, currentId],
+    `SELECT d."diffJson"
+     FROM "AuditDiff" d
+     JOIN "AuditRun" b ON b."runId" = d."baselineRunId"
+     JOIN "AuditRun" c ON c."runId" = d."currentRunId"
+     WHERE d."baselineRunId" = $1
+       AND d."currentRunId" = $2
+       AND b."ownerUserId" = $3
+       AND c."ownerUserId" = $3
+     LIMIT 1`,
+    [baselineId, currentId, ownerUserId],
   );
 
   if (stored[0]) {
@@ -259,7 +279,10 @@ export async function getDiff(baselineId: string, currentId: string): Promise<Di
     return diff;
   }
 
-  const [baseline, current] = await Promise.all([getRunById(baselineId), getRunById(currentId)]);
+  const [baseline, current] = await Promise.all([
+    getRunById(ownerUserId, baselineId),
+    getRunById(ownerUserId, currentId),
+  ]);
   if (!baseline || !current) {
     logQueryDuration("getDiff(miss)", started);
     return null;
@@ -270,7 +293,7 @@ export async function getDiff(baselineId: string, currentId: string): Promise<Di
   return diff;
 }
 
-export async function upsertRunFromReport(report: Report): Promise<void> {
+export async function upsertRunFromReport(ownerUserId: string, report: Report): Promise<void> {
   ensureDbConfigured();
   const db = getDb();
 
@@ -285,11 +308,12 @@ export async function upsertRunFromReport(report: Report): Promise<void> {
 
   await db.unsafe(
     `INSERT INTO "AuditRun" (
-      "runId", "target", "domain", "coverage", "startedAt", "finishedAt", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices", "status", "summaryJson", "reportJson"
+      "runId", "displayName", "ownerUserId", "target", "domain", "coverage", "startedAt", "finishedAt", "scoreTotal", "pagesCrawled", "errors", "warnings", "notices", "status", "summaryJson", "reportJson"
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      $1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
     )
     ON CONFLICT ("runId") DO UPDATE SET
+      "ownerUserId" = EXCLUDED."ownerUserId",
       "target" = EXCLUDED."target",
       "domain" = EXCLUDED."domain",
       "coverage" = EXCLUDED."coverage",
@@ -306,6 +330,7 @@ export async function upsertRunFromReport(report: Report): Promise<void> {
       "updatedAt" = NOW()`,
     [
       report.run_id,
+      ownerUserId,
       report.inputs.target,
       domain,
       report.inputs.coverage,
@@ -323,15 +348,36 @@ export async function upsertRunFromReport(report: Report): Promise<void> {
   );
 }
 
-export async function upsertDiffReport(diff: DiffReport): Promise<void> {
+export async function attachRunOwner(ownerUserId: string, runId: string): Promise<boolean> {
+  ensureDbConfigured();
+  const db = getDb();
+  const rows = await db.unsafe<Array<{ runId: string }>>(
+    `UPDATE "AuditRun"
+     SET "ownerUserId" = $1, "updatedAt" = NOW()
+     WHERE "runId" = $2
+     RETURNING "runId"`,
+    [ownerUserId, runId],
+  );
+  return rows.length > 0;
+}
+
+export async function upsertDiffReport(ownerUserId: string, diff: DiffReport): Promise<void> {
   ensureDbConfigured();
   const db = getDb();
 
   await db.unsafe(
     `INSERT INTO "AuditDiff" ("baselineRunId", "currentRunId", "diffJson")
-     VALUES ($1, $2, $3)
+     SELECT $1, $2, $3
+     WHERE EXISTS (
+       SELECT 1 FROM "AuditRun" b
+       WHERE b."runId" = $1 AND b."ownerUserId" = $4
+     )
+     AND EXISTS (
+       SELECT 1 FROM "AuditRun" c
+       WHERE c."runId" = $2 AND c."ownerUserId" = $4
+     )
      ON CONFLICT ("baselineRunId", "currentRunId")
      DO UPDATE SET "diffJson" = EXCLUDED."diffJson"`,
-    [diff.baseline_run_id, diff.current_run_id, db.json(diff as unknown as never)],
+    [diff.baseline_run_id, diff.current_run_id, db.json(diff as unknown as never), ownerUserId],
   );
 }

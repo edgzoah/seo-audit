@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, LineChart, ShieldCheck } from "lucide-react";
 
 import { listRunsPage } from "../lib/audits/repo";
+import { requireUser } from "../lib/auth/session";
 import { RunKpiCards } from "../components/domain/RunKpiCards";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -12,7 +13,8 @@ import { formatPercent } from "./lib/format";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const { items: runs } = await listRunsPage({ page: 1, pageSize: 20, sort: "newest" });
+  const user = await requireUser();
+  const { items: runs } = await listRunsPage(user.userId, { page: 1, pageSize: 20, sort: "newest" });
   const recent = runs[0];
 
   return (
@@ -24,7 +26,7 @@ export default async function HomePage() {
             <Badge variant="outline">Enterprise SEO Operations</Badge>
             <h1 className="text-3xl font-semibold tracking-tight">SEO Audit Command Center</h1>
             <p className="text-muted-foreground">
-              Manage run quality, compare regressions, and launch new audits from a single B2B SaaS workspace.
+              Track audit quality, compare regressions, and launch new audits from one workspace.
             </p>
           </div>
           <div className="flex gap-2">

@@ -1,7 +1,10 @@
 import { AuditWizard } from "../../components/domain/AuditWizard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { requireUser } from "../../lib/auth/session";
 
-export default function NewAuditPage() {
+export default async function NewAuditPage() {
+  await requireUser();
+
   return (
     <div className="space-y-6">
       <Card className="grid-bg">

@@ -22,6 +22,7 @@ export const newAuditSchema = z
     keyword: z.string().trim().optional().or(z.literal("")),
     goal: z.string().trim().optional().or(z.literal("")),
     constraints: z.array(z.string()),
+    recaptchaToken: z.string().min(1, "Complete reCAPTCHA verification."),
   })
   .refine(
     (value) => {
