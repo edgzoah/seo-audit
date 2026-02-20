@@ -49,6 +49,40 @@ export interface CrawlProgress {
   crawlLimit: number;
 }
 
+type CrawlBatchResult =
+  | {
+      kind: "skip";
+    }
+  | {
+      kind: "fetched";
+      current: { url: string; depth: number };
+      page: CrawledPage;
+      event: CrawlEvent;
+      internalLinks: string[];
+      isFocusPage: boolean;
+    }
+  | {
+      kind: "error";
+      event: CrawlEvent;
+    };
+
+function resolveCrawlConcurrency(inputs: AuditInputs): number {
+  const fromEnv = Number.parseInt(process.env.SEO_AUDIT_CRAWL_CONCURRENCY ?? "", 10);
+  if (Number.isInteger(fromEnv) && fromEnv >= 1) {
+    return Math.min(16, fromEnv);
+  }
+
+  if (inputs.coverage === "quick") {
+    return 8;
+  }
+
+  if (inputs.coverage === "surface") {
+    return 6;
+  }
+
+  return 4;
+}
+
 function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, "en");
 }
@@ -483,138 +517,160 @@ export async function crawlSite(
   const allowedHosts = resolveAllowedHosts(inputs);
   const surfaceIdentities = new Set<string>();
   const forcedNeighborhoodUrls = new Set<string>();
-  const focusNeighborhoodCap = focusUrl ? 25 : 0;
+  const focusNeighborhoodCap = focusUrl ? (inputs.coverage === "quick" ? 5 : 25) : 0;
   let focusNeighborhoodCount = 0;
   const crawlLimit = inputs.max_pages + focusNeighborhoodCap;
+  const concurrency = resolveCrawlConcurrency(inputs);
 
   while (queue.length > 0 && pages.length < crawlLimit) {
-    const current = queue.shift();
-    if (!current) {
-      continue;
-    }
-
-    if (visited.has(current.url)) {
-      continue;
-    }
-    visited.add(current.url);
-
-    if (!shouldAllowUrlForCrawl(current.url, inputs, allowedHosts)) {
-      continue;
-    }
-
-    const isForcedNeighborhood = forcedNeighborhoodUrls.has(current.url) || (focusUrl !== null && current.url === focusUrl);
-    if (inputs.coverage === "surface" && !isForcedNeighborhood) {
-      const identity = canonicalizeForCrawlIdentity(current.url);
-      if (surfaceIdentities.has(identity)) {
+    const batch: Array<{ url: string; depth: number }> = [];
+    while (queue.length > 0 && batch.length < concurrency && pages.length + batch.length < crawlLimit) {
+      const next = queue.shift();
+      if (!next) {
         continue;
       }
-      surfaceIdentities.add(identity);
+      if (visited.has(next.url)) {
+        continue;
+      }
+      visited.add(next.url);
+      batch.push(next);
     }
 
-    const startedAt = Date.now();
-    try {
-      const response = await fetch(current.url, {
-        headers: {
-          "user-agent": inputs.user_agent,
-          accept: "text/html,application/xhtml+xml",
-        },
-        signal: AbortSignal.timeout(inputs.timeout_ms),
-      });
+    if (batch.length === 0) {
+      continue;
+    }
 
-      const timingMs = Date.now() - startedAt;
-      const finalUrl = response.url || current.url;
-      const contentType = response.headers.get("content-type");
-      const headersRecord = headersToRecord(response.headers);
-      const html = await response.text();
-
-      pages.push({
-        url: current.url,
-        final_url: finalUrl,
-        status: response.status,
-        depth: current.depth,
-        content_type: contentType,
-        response_headers: headersRecord,
-        html,
-      });
-
-      events.push({
-        type: "fetched",
-        url: current.url,
-        final_url: finalUrl,
-        status: response.status,
-        depth: current.depth,
-        content_type: contentType,
-        timing_ms: timingMs,
-      });
-
-      const internalLinks = extractInternalLinks(html, finalUrl);
-      const normalizedFinalUrl = normalizeUrl(finalUrl);
-      const isFocusPage =
-        focusUrl !== null && (current.url === focusUrl || (normalizedFinalUrl !== null && normalizedFinalUrl === focusUrl));
-
-      if (isFocusPage && focusNeighborhoodCount < focusNeighborhoodCap) {
-        for (const link of internalLinks) {
-          if (focusNeighborhoodCount >= focusNeighborhoodCap) {
-            break;
-          }
-
-          if (queued.has(link) || visited.has(link)) {
-            continue;
-          }
-          if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
-            continue;
-          }
-
-          queue.push({ url: link, depth: current.depth + 1 });
-          queued.add(link);
-          forcedNeighborhoodUrls.add(link);
-          focusNeighborhoodCount += 1;
+    const results = await Promise.all(
+      batch.map(async (current) => {
+        if (!shouldAllowUrlForCrawl(current.url, inputs, allowedHosts)) {
+          return { kind: "skip" } satisfies CrawlBatchResult;
         }
-      }
 
-      const canDiscoverLinks = (inputs.coverage === "surface" || inputs.coverage === "full") && current.depth < inputs.crawl_depth;
-      if (!canDiscoverLinks) {
+        const isForcedNeighborhood = forcedNeighborhoodUrls.has(current.url) || (focusUrl !== null && current.url === focusUrl);
+        if (inputs.coverage === "surface" && !isForcedNeighborhood) {
+          const identity = canonicalizeForCrawlIdentity(current.url);
+          if (surfaceIdentities.has(identity)) {
+            return { kind: "skip" } satisfies CrawlBatchResult;
+          }
+          surfaceIdentities.add(identity);
+        }
+
+        const startedAt = Date.now();
+        try {
+          const response = await fetch(current.url, {
+            headers: {
+              "user-agent": inputs.user_agent,
+              accept: "text/html,application/xhtml+xml",
+            },
+            signal: AbortSignal.timeout(inputs.timeout_ms),
+          });
+
+          const timingMs = Date.now() - startedAt;
+          const finalUrl = response.url || current.url;
+          const contentType = response.headers.get("content-type");
+          const headersRecord = headersToRecord(response.headers);
+          const html = await response.text();
+
+          const internalLinks = extractInternalLinks(html, finalUrl);
+          const normalizedFinalUrl = normalizeUrl(finalUrl);
+          const isFocusPage =
+            focusUrl !== null && (current.url === focusUrl || (normalizedFinalUrl !== null && normalizedFinalUrl === focusUrl));
+
+          return {
+            kind: "fetched",
+            current,
+            page: {
+              url: current.url,
+              final_url: finalUrl,
+              status: response.status,
+              depth: current.depth,
+              content_type: contentType,
+              response_headers: headersRecord,
+              html,
+            } satisfies CrawledPage,
+            event: {
+              type: "fetched",
+              url: current.url,
+              final_url: finalUrl,
+              status: response.status,
+              depth: current.depth,
+              content_type: contentType,
+              timing_ms: timingMs,
+            } satisfies CrawlEvent,
+            internalLinks,
+            isFocusPage,
+          } satisfies CrawlBatchResult;
+        } catch (error) {
+          const timingMs = Date.now() - startedAt;
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            kind: "error",
+            event: {
+              type: "fetch_error",
+              url: current.url,
+              final_url: null,
+              status: null,
+              depth: current.depth,
+              content_type: null,
+              timing_ms: timingMs,
+              error: message,
+            } satisfies CrawlEvent,
+          } satisfies CrawlBatchResult;
+        }
+      }),
+    );
+
+    for (const result of results) {
+      if (result.kind === "skip") {
         continue;
       }
 
-      for (const link of internalLinks) {
-        if (queued.has(link) || visited.has(link)) {
-          continue;
+      events.push(result.event);
+      if (result.kind === "fetched") {
+        pages.push(result.page);
+
+        if (result.isFocusPage && focusNeighborhoodCount < focusNeighborhoodCap) {
+          for (const link of result.internalLinks) {
+            if (focusNeighborhoodCount >= focusNeighborhoodCap) {
+              break;
+            }
+
+            if (queued.has(link) || visited.has(link)) {
+              continue;
+            }
+            if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
+              continue;
+            }
+
+            queue.push({ url: link, depth: result.current.depth + 1 });
+            queued.add(link);
+            forcedNeighborhoodUrls.add(link);
+            focusNeighborhoodCount += 1;
+          }
         }
 
-        if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
-          continue;
+        const canDiscoverLinks = (inputs.coverage === "surface" || inputs.coverage === "full") && result.current.depth < inputs.crawl_depth;
+        if (canDiscoverLinks) {
+          for (const link of result.internalLinks) {
+            if (queued.has(link) || visited.has(link)) {
+              continue;
+            }
+            if (!shouldAllowUrlForCrawl(link, inputs, allowedHosts)) {
+              continue;
+            }
+            queue.push({ url: link, depth: result.current.depth + 1 });
+            queued.add(link);
+          }
         }
-
-        queue.push({ url: link, depth: current.depth + 1 });
-        queued.add(link);
       }
-      onProgress?.({
-        pagesFetched: pages.length,
-        eventsCount: events.length,
-        queueLength: queue.length,
-        crawlLimit,
-      });
-    } catch (error) {
-      const timingMs = Date.now() - startedAt;
-      const message = error instanceof Error ? error.message : String(error);
-      events.push({
-        type: "fetch_error",
-        url: current.url,
-        final_url: null,
-        status: null,
-        depth: current.depth,
-        content_type: null,
-        timing_ms: timingMs,
-        error: message,
-      });
-      onProgress?.({
-        pagesFetched: pages.length,
-        eventsCount: events.length,
-        queueLength: queue.length,
-        crawlLimit,
-      });
     }
+
+    onProgress?.({
+      pagesFetched: pages.length,
+      eventsCount: events.length,
+      queueLength: queue.length,
+      crawlLimit,
+    });
   }
 
   return { pages, events };

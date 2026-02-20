@@ -97,6 +97,11 @@ function emitProgress(options: AuditCliOptions, percent: number, stage: string, 
   });
 }
 
+function logAuditInfo(runId: string, message: string, details?: Record<string, unknown>): void {
+  const payload = details ? ` ${JSON.stringify(details)}` : "";
+  console.info(`[audit][info][${runId}] ${message}${payload}`);
+}
+
 function normalizeUrl(raw: string | null, baseUrl?: string): string | null {
   if (!raw) {
     return null;
@@ -867,6 +872,19 @@ function parseConstraints(rawConstraints: string | undefined): string[] {
     .filter((value) => value.length > 0);
 }
 
+function resolveTimeoutMs(defaultTimeoutMs: number): number {
+  const fromEnv = Number.parseInt(process.env.SEO_AUDIT_TIMEOUT_MS ?? "", 10);
+  if (Number.isInteger(fromEnv) && fromEnv > 0) {
+    return fromEnv;
+  }
+
+  if (process.env.VERCEL === "1") {
+    return Math.min(defaultTimeoutMs, 5000);
+  }
+
+  return defaultTimeoutMs;
+}
+
 async function loadGenericAnchors(pathValue: string | undefined): Promise<string[] | null> {
   if (!pathValue) {
     return null;
@@ -955,7 +973,7 @@ function buildInputs(
     respect_robots: options.robots ?? defaults.respect_robots,
     rendering_mode: renderingMode,
     user_agent: defaults.user_agent,
-    timeout_ms: defaults.timeout_ms,
+    timeout_ms: resolveTimeoutMs(defaults.timeout_ms),
     locale: defaults.locale,
     report_format: options.format ?? defaults.report_format,
     llm_enabled: options.llm ?? defaults.llm_enabled,
@@ -1078,9 +1096,22 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const inputs = buildInputs(normalizedUrl, config.defaults, options, resolvedBriefFocus);
 
   const runId = buildRunId(startedAtDate);
+  const runStartedAtMs = Date.now();
+  logAuditInfo(runId, "run_started", {
+    target: normalizedUrl,
+    coverage: inputs.coverage,
+    maxPages: inputs.max_pages,
+    crawlDepth: inputs.crawl_depth,
+    timeoutMs: inputs.timeout_ms,
+    llmEnabled: inputs.llm_enabled,
+    dbWriteEnabled: isDbWriteEnabled(options.dbWrite),
+    hasBaseline: Boolean(inputs.baseline_run_id),
+  });
+
   const runDir = path.join(resolveRunsRootDir(), runId);
   await mkdir(runDir, { recursive: true });
   emitProgress(options, 6, "init", "Preparing run directory");
+  logAuditInfo(runId, "run_directory_prepared", { runDir });
 
   await writeFile(path.join(runDir, "brief.md"), `${inputs.brief.text}\n`, "utf-8");
   await writeFile(path.join(runDir, "inputs.json"), `${JSON.stringify(inputs, null, 2)}\n`, "utf-8");
@@ -1088,6 +1119,12 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   emitProgress(options, 10, "seed", "Discovering seeds");
   const seedDiscovery = await discoverSeeds(inputs);
   await writeFile(path.join(runDir, "seed-discovery.json"), `${JSON.stringify(seedDiscovery, null, 2)}\n`, "utf-8");
+  logAuditInfo(runId, "seed_discovery_finished", {
+    seeds: seedDiscovery.seeds.length,
+    discovered: seedDiscovery.discovered.length,
+    sitemapsChecked: seedDiscovery.sitemap_urls_checked.length,
+    robotsRules: seedDiscovery.robots_disallow.length,
+  });
 
   emitProgress(options, 14, "crawl", "Crawling pages");
   const crawl = await crawlSite(inputs, seedDiscovery.seeds, (progress) => {
@@ -1097,6 +1134,11 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   });
   const crawlJsonl = crawl.events.map((event) => JSON.stringify(event)).join("\n");
   await writeFile(path.join(runDir, "crawl.jsonl"), crawlJsonl.length > 0 ? `${crawlJsonl}\n` : "", "utf-8");
+  logAuditInfo(runId, "crawl_finished", {
+    pages: crawl.pages.length,
+    events: crawl.events.length,
+    fetchErrors: crawl.events.filter((event) => event.type === "fetch_error").length,
+  });
 
   if (crawl.pages.length === 0) {
     throw new Error("Crawl did not return any fetchable pages.");
@@ -1106,6 +1148,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const extractedPages = crawl.pages.map((page) =>
     extractPageData(page.html, page.url, page.final_url, page.status, page.response_headers),
   );
+  logAuditInfo(runId, "page_extraction_finished", { pages: extractedPages.length });
   const normalizedFocusUrl = normalizeUrl(inputs.brief.focus.primary_url, inputs.target);
   const graph = buildInternalLinkGraph(extractedPages, normalizedFocusUrl);
   let graphEnrichedPages = graph.pages;
@@ -1120,6 +1163,11 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
       runLighthouse(homeUrl, inputs.timeout_ms * 2),
     ]);
   }
+  logAuditInfo(runId, "lighthouse_finished", {
+    enabled: shouldMeasureLighthouse,
+    focusMeasured: focusLighthouse.measured,
+    homeMeasured: homeLighthouse.measured,
+  });
 
   const measuredByUrl = new Map<string, LighthouseMetrics>();
   if (normalizedFocusUrl && focusLighthouse.measured && focusLighthouse.metrics) {
@@ -1156,6 +1204,10 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   const inlinkUrls = graph.focusInlinkUrls.size > 0 ? graph.focusInlinkUrls : resolveInlinkUrls(graphEnrichedPages, focusUrl);
   const taggedIssues = applyFocusTags({ issues: baseIssues, focusUrl, inlinkUrls });
   const issues = consolidateIssues(taggedIssues);
+  logAuditInfo(runId, "rules_finished", {
+    baseIssues: baseIssues.length,
+    consolidatedIssues: issues.length,
+  });
 
   emitProgress(options, 78, "report", "Writing artifacts");
   await writeFile(path.join(runDir, "pages.json"), `${JSON.stringify(graphEnrichedPages, null, 2)}\n`, "utf-8");
@@ -1185,6 +1237,13 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
       maxItems: 10,
     }),
   });
+  logAuditInfo(runId, "report_built", {
+    scoreTotal: report.summary.score_total,
+    pagesCrawled: report.summary.pages_crawled,
+    errors: report.summary.errors,
+    warnings: report.summary.warnings,
+    notices: report.summary.notices,
+  });
 
   if (inputs.llm_enabled) {
     emitProgress(options, 86, "llm", "Generating LLM proposals");
@@ -1205,6 +1264,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
   if (isDbWriteEnabled(options.dbWrite)) {
     emitProgress(options, 96, "db", "Persisting audit run in database");
     await upsertAuditRun(report, options.ownerUserId);
+    logAuditInfo(runId, "db_persist_finished");
   }
 
   if (inputs.baseline_run_id) {
@@ -1217,10 +1277,12 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
 
     if (isDbWriteEnabled(options.dbWrite)) {
       await buildAndUpsertDiff(baselineReport, report);
+      logAuditInfo(runId, "diff_persist_finished", { baselineRunId: inputs.baseline_run_id });
     }
   }
 
   emitProgress(options, 100, "done", "Completed");
+  logAuditInfo(runId, "run_finished", { durationMs: Date.now() - runStartedAtMs });
 
   return {
     runId,
