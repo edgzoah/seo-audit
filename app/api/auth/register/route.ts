@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 
 import { createUser, getUserByEmail } from "../../../../lib/auth/repo";
+import { issueRegisterTicket } from "../../../../lib/auth/register-ticket";
 import { registerSchema } from "../../../../lib/auth/schemas";
 import { extractRemoteIp, verifyRecaptchaToken } from "../../../../lib/security/recaptcha";
 
@@ -22,7 +23,8 @@ export async function POST(request: Request): Promise<Response> {
 
     const passwordHash = await bcrypt.hash(input.password, 12);
     const user = await createUser(input.email, passwordHash);
-    return NextResponse.json({ id: user.id, email: user.email }, { status: 201 });
+    const registerTicket = issueRegisterTicket(user.email);
+    return NextResponse.json({ id: user.id, email: user.email, registerTicket }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = message.includes("RECAPTCHA_SECRET_KEY") ? 500 : 400;

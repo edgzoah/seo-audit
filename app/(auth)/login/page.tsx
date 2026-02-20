@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import ReCAPTCHA from "react-google-recaptcha";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -15,12 +15,11 @@ import { Input } from "../../../components/ui/input";
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/";
   const captchaRef = useRef<ReCAPTCHA | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? "";
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "1";
 
   const form = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -48,6 +47,10 @@ export default function LoginPage() {
       return;
     }
 
+    const nextPath = (() => {
+      if (typeof window === "undefined") return "/";
+      return new URLSearchParams(window.location.search).get("next") || "/";
+    })();
     router.push(nextPath);
     router.refresh();
   }
@@ -69,6 +72,17 @@ export default function LoginPage() {
         <CardContent>
           <Form {...form}>
             <form className="space-y-4" onSubmit={submitForm}>
+              {googleEnabled ? (
+                <Button
+                  type="button"
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => signIn("google", { callbackUrl: "/" })}
+                >
+                  Continue with Google
+                </Button>
+              ) : null}
+
               <FormField
                 control={form.control}
                 name="email"

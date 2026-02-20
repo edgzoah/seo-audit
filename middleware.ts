@@ -22,9 +22,11 @@ function isPublicApi(pathname: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", pathname);
 
   if (isPublicAsset(pathname) || isPublicApi(pathname)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   if (PUBLIC_PATHS.has(pathname)) {
@@ -32,19 +34,19 @@ export async function middleware(request: NextRequest) {
     if (token?.sub) {
       return NextResponse.redirect(new URL("/", request.url));
     }
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const protectedAppRoute = pathname === "/" || pathname.startsWith("/audits") || pathname.startsWith("/compare") || pathname.startsWith("/new");
   const protectedApiRoute = pathname.startsWith("/api/runs") || pathname.startsWith("/api/audits/run");
 
   if (!protectedAppRoute && !protectedApiRoute) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (token?.sub) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   if (protectedApiRoute) {

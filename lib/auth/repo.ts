@@ -40,3 +40,11 @@ export async function createUser(email: string, passwordHash: string): Promise<A
   );
   return toAuthUser(rows[0]);
 }
+
+export async function ensureUserByEmail(email: string, passwordHashFallback: string): Promise<AuthUser> {
+  const existing = await getUserByEmail(email);
+  if (existing) {
+    return existing;
+  }
+  return createUser(email, passwordHashFallback);
+}

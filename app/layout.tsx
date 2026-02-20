@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
 import { AppShell } from "../components/app-shell/AppShell";
 import { getOptionalUser } from "../lib/auth/session";
 import "./globals.css";
@@ -10,7 +11,9 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  const user = await getOptionalUser();
+  const pathname = (await headers()).get("x-pathname") ?? "";
+  const isAuthPage = pathname === "/login" || pathname === "/register";
+  const user = isAuthPage ? null : await getOptionalUser();
 
   return (
     <html lang="en">

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import ReCAPTCHA from "react-google-recaptcha";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
+import { signIn } from "next-auth/react";
 
 import { registerSchema, type RegisterInput } from "../../../lib/auth/schemas";
 import { Button } from "../../../components/ui/button";
@@ -18,6 +19,7 @@ export default function RegisterPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? "";
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "1";
 
   const form = useForm<RegisterInput>({
     resolver: zodResolver(registerSchema),
@@ -37,7 +39,7 @@ export default function RegisterPage() {
       body: JSON.stringify(values),
     });
 
-    const body = (await response.json()) as { error?: string };
+    const body = (await response.json()) as { error?: string; registerTicket?: string };
     if (!response.ok) {
       setSubmitError(body.error ?? "Registration failed.");
       captchaRef.current?.reset();
@@ -45,7 +47,20 @@ export default function RegisterPage() {
       return;
     }
 
-    router.push("/login");
+    const loginResult = await signIn("credentials", {
+      email: values.email,
+      password: values.password,
+      registerTicket: body.registerTicket,
+      redirect: false,
+    });
+
+    if (!loginResult || loginResult.error) {
+      router.push("/login");
+      router.refresh();
+      return;
+    }
+
+    router.push("/");
     router.refresh();
   }
 
@@ -66,6 +81,17 @@ export default function RegisterPage() {
         <CardContent>
           <Form {...form}>
             <form className="space-y-4" onSubmit={submitForm}>
+              {googleEnabled ? (
+                <Button
+                  type="button"
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => signIn("google", { callbackUrl: "/" })}
+                >
+                  Continue with Google
+                </Button>
+              ) : null}
+
               <FormField
                 control={form.control}
                 name="email"

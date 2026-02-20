@@ -9,16 +9,20 @@ export interface SessionUser {
 }
 
 export async function getOptionalUser(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions);
-  const user = session?.user as { id?: string; email?: string | null } | undefined;
-  if (!user?.id) {
+  try {
+    const session = await getServerSession(authOptions);
+    const user = session?.user as { id?: string; email?: string | null } | undefined;
+    if (!user?.id) {
+      return null;
+    }
+
+    return {
+      userId: user.id,
+      email: user.email ?? null,
+    };
+  } catch {
     return null;
   }
-
-  return {
-    userId: user.id,
-    email: user.email ?? null,
-  };
 }
 
 export async function requireUser(): Promise<SessionUser> {
