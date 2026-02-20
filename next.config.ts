@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   typescript: {
     tsconfigPath: "./tsconfig.next.json",
   },
+  outputFileTracingIncludes: {
+    "/*": ["./dist/**/*"],
+  },
 };
 
 export default nextConfig;
