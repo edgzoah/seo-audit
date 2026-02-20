@@ -19,12 +19,9 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
   }
 
   const { jobId } = await context.params;
-  const job = getRunJob(jobId);
+  const job = await getRunJob(user.id, jobId);
 
   if (!job) {
-    return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
-  if (job.ownerUserId !== user.id) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 

@@ -12,6 +12,13 @@ enum AuditRunStatus {
   critical
 }
 
+enum AuditJobStatus {
+  queued
+  running
+  succeeded
+  failed
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -19,6 +26,7 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   auditRuns    AuditRun[]
+  auditRunJobs AuditRunJob[]
 }
 
 model AuditRun {
@@ -62,4 +70,18 @@ model AuditDiff {
 
   @@unique([baselineRunId, currentRunId])
   @@index([currentRunId])
+}
+
+model AuditRunJob {
+  id          String         @id @default(uuid()) @db.Uuid
+  ownerUserId String         @db.Uuid
+  owner       User           @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  status      AuditJobStatus
+  runId       String?
+  error       String?
+  logsJson    Json
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([ownerUserId, createdAt(sort: Desc)])
 }

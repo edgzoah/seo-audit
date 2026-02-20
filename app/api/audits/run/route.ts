@@ -25,7 +25,7 @@ export async function POST(request: Request): Promise<Response> {
       return NextResponse.json({ error: "reCAPTCHA verification failed." }, { status: 400 });
     }
 
-    const job = startRunJob(input, user.id);
+    const job = await startRunJob(input, user.id);
     return NextResponse.json({ jobId: job.id, status: job.status }, { status: 202 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

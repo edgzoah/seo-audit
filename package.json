@@ -7,7 +7,6 @@
     "seo-audit": "dist/cli.js"
   },
   "scripts": {
-    "prebuild": "npm run build:cli",
     "build": "next build",
     "dev": "next dev",
     "start": "next start",

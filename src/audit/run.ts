@@ -51,6 +51,7 @@ export interface AuditCliOptions {
   genericAnchors?: string;
   includeSerp?: boolean;
   dbWrite?: boolean;
+  ownerUserId?: string;
   onProgress?: (progress: AuditProgressEvent) => void;
 }
 
@@ -1190,7 +1191,7 @@ export async function runAuditCommand(target: string, options: AuditCliOptions =
 
   if (isDbWriteEnabled(options.dbWrite)) {
     emitProgress(options, 96, "db", "Persisting audit run in database");
-    await upsertAuditRun(report);
+    await upsertAuditRun(report, options.ownerUserId);
   }
 
   if (inputs.baseline_run_id) {

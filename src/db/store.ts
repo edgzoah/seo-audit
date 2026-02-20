@@ -22,10 +22,10 @@ export function isDbWriteEnabled(flag: boolean | undefined): boolean {
   return flag !== false;
 }
 
-export async function upsertAuditRun(report: Report): Promise<void> {
+export async function upsertAuditRun(report: Report, ownerUserIdOverride?: string): Promise<void> {
   const db = getCliDb();
   const status = deriveStatus(report.summary);
-  const ownerUserId = process.env.SEO_AUDIT_DEFAULT_OWNER_USER_ID || SYSTEM_USER_ID;
+  const ownerUserId = ownerUserIdOverride || process.env.SEO_AUDIT_DEFAULT_OWNER_USER_ID || SYSTEM_USER_ID;
 
   await db.unsafe(
     `INSERT INTO "AuditRun" (
